@@ -23,17 +23,42 @@ komutla gönderir:
 ```
 Claude ──brief──▶ agent_run.sh delegate
                     │
+                    ├─ 0. kota        : Codex'in son kayıtlı kullanımı okunur (%90 ve üstünde Codex atlanır)
                     ├─ 1. uygula      : Codex / Antigravity kodu yazar (commit atamaz)
                     ├─ 2. doğrula     : test komutunu BETİK çalıştırır (ajanın "geçti" demesi yetmez)
                     ├─ 3. incele      : yeni, salt okunur bir oturum brief'e göre inceler
                     │                   (istenirse diğer model ailesinden)
                     ├─ 4. düzelt      : kritik/önemli bulgular aynı oturuma geri gönderilir (en fazla 2 tur)
-                    └─ FINAL DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | NEEDS_ATTENTION | FAILED
+                    │   (bir ajanın kotası biterse rolünü diğer ajan devralır)
+                    └─ FINAL DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | NEEDS_ATTENTION | LIMITED | FAILED
 Claude ◀── tek satır durum + değişen dosyalar + açık kalan notlar
 ```
 
 `DONE` gelirse Claude değişikliği okumaz, sıradaki göreve geçer. En sonda tüm testleri
 bir kez çalıştırır ve tüm değişikliğe tek bir inceleme yaptırır.
+
+### Kota bitince
+
+Bir ajanın kullanım limiti dolarsa iş yarıda kalmaz, rolü diğer ajan devralır:
+
+- **Başlamadan önce:** Codex hesabın kotasını oturum dosyalarına yazar (5 saatlik ve
+  haftalık pencere). Betik en yenisini okur ve ilk satırda gösterir:
+  `usage: codex 5h=40% week=12%`. Pencerelerden biri %90'ı geçtiyse Codex baştan atlanır.
+- **Görev sırasında:** bir adım "usage limit" / `RESOURCE_EXHAUSTED` gibi bir hatayla
+  düşerse o adım `LIMITED` olarak işaretlenir ve ajan çalıştırmanın geri kalanında
+  kullanılmaz.
+  - *Uygulama:* diğer ajan baştan başlar; yarım kalan değişikliklerin ağaçta olabileceği
+    ona söylenir.
+  - *Düzeltme turu:* diğer ajan görev özetini ve düzeltme listesini birlikte alır.
+  - *İnceleme:* diğer ajan inceler. Farklı aileden inceleme istenmişti ama aynı aileye
+    düştüyse `concerns:` satırında belirtilir.
+- **İkisi de bitmişse:** `FINAL LIMITED` döner; `limits:` satırında kimin ne zaman
+  sıfırlanacağı yazar. İnceleme sırasında bittiyse inceleme atlanır ve sonuç
+  `DONE_WITH_CONCERNS` olur.
+
+Antigravity'ye düşüldüğünde model seçilmemişse `EXTERNAL_AGENT_AGY_MODEL`, o da yoksa
+`gemini-4-argon-medium` kullanılır. Devralma `fallback:` satırında görünür, Claude da
+raporunda bunu belirtir. Tek bir ajanda ısrar ediyorsanız `--no-fallback`.
 
 ## Test sonuçları
 
@@ -118,7 +143,8 @@ değişkenini ayarlayabilirsiniz.
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `EXTERNAL_AGENT_MODEL` | `gpt-6.1-sol` | Codex modeli |
-| `EXTERNAL_AGENT_AGY_MODEL` | (yok, kullanıcıya sorulur) | Antigravity modeli, ör. `gemini-4-argon-medium` |
+| `EXTERNAL_AGENT_AGY_MODEL` | (yok, kullanıcıya sorulur) | Antigravity modeli, ör. `gemini-4-argon-medium`. Codex'ten yedek olarak düşüldüğünde de bu kullanılır; ayarlı değilse `gemini-4-argon-medium` |
+| `EXTERNAL_AGENT_CODEX_MAX_PCT` | `90` | Codex'in 5 saatlik ya da haftalık kullanımı bu yüzdeye ulaşınca Codex atlanır |
 | `EXTERNAL_AGENT_RUNS` | `$TMPDIR/external-agent` | Çalıştırma kayıtlarının kök klasörü |
 | `EXTERNAL_AGENT_SNAP_ROOT` | `~/.cache/external-agent` | Antigravity'nin geçici proje kopyaları |
 
@@ -130,6 +156,7 @@ $S models --agent agy
 $S delegate --agent agy --model gemini-4-argon-medium --review-agent codex \
    --cd ~/proje --brief gorev.md --verify "npm test" --name gorev-1
 $S delegate --agent codex --sandbox read-only --cd ~/proje --brief soru.md   # sadece araştırma
+$S delegate --agent codex --no-fallback --cd ~/proje --brief gorev.md       # kota bitse de başka ajana geçme
 ```
 
 ## Güvenlik ve sınırlar
@@ -154,6 +181,10 @@ $S delegate --agent codex --sandbox read-only --cd ~/proje --brief soru.md   # s
   çalışamaz (sandbox orayı engelliyor).
 - **Antigravity güvenilir alanları:** proje, Antigravity'nin `trustedWorkspaces`
   listesindeki bir klasörün altında olmalı (varsayılan olarak ev dizini).
+- **Antigravity kotası önceden görülemez:** `agy` kullanım bilgisini hiçbir yere
+  yazmıyor, kota ancak bir adım hatayla düşünce anlaşılır. Gerçek kota hata mesajı
+  henüz görülmedi; Antigravity kotası bittiğinde sonuç `LIMITED` yerine `FAILED`
+  olursa mesajın metni betikteki `limit-check` kalıplarına eklenmeli.
 - **Windows:** Windows 11 25H2'de (Git Bash, codex-cli 0.163, agy 1.4.6) Codex,
   Antigravity, karma ve sadece okuma pipeline'ları test edildi. Ayrıca:
   - Antigravity'nin terminal sandbox'ı Windows 11 24H2 gerektirir.
