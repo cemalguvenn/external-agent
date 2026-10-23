@@ -48,6 +48,12 @@
   returns partial output with a warning.
 - Exit codes: 0 ok, 2 usage error, 3 model/agent error with an `AGY_ERROR: {...}` line on
   stderr.
+- **Quota.** agy fetches its quota internally (`GetG1Credits` / `doRefreshQuota` in
+  `~/.gemini/antigravity-cli/cli.log`) but never writes the figures anywhere, and has no
+  usage command, so there is no advance warning. A failed step whose error mentions
+  `RESOURCE_EXHAUSTED`, `quota`, `429` or a rate limit counts as out of quota, and the
+  script moves the role to Codex. The real message hasn't been seen yet: if agy runs
+  out and the run ends `FAILED` instead, add its wording to `limit-check` in the script.
 - The CLI auto-updates in the background: after one run, `agy --version` may already
   report a newer version.
 
@@ -61,3 +67,4 @@
 | Edits fail with `operation not permitted` | Folder not in `trustedWorkspaces` | User adds it in Antigravity, or use Codex |
 | Very slow, huge token counts | Working in an untrusted dir (e.g. `/var/folders`) | Keep the project and snapshot root under `$HOME` |
 | `warning: --mode auto is not available` | Account tier | Ignore; the script doesn't use auto mode |
+| `stage … LIMITED agy: quota exhausted` | Antigravity quota used up | Automatic: Codex takes over. If `FINAL LIMITED`, do it yourself or tell the user |

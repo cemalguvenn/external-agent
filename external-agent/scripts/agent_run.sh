@@ -6,10 +6,14 @@
 #   agent_run.sh delegate --cd DIR --brief FILE [--verify CMD] [--agent codex|agy] [--model M]
 #                         [--review-agent codex|agy] [--review-model M] [--name NAME]
 #                         [--effort LEVEL] [--review-effort LEVEL] [--max-fix-rounds N]
-#                         [--no-review] [--sandbox workspace-write|read-only] [--network] [--run-dir DIR]
+#                         [--no-review] [--no-fallback] [--sandbox workspace-write|read-only]
+#                         [--network] [--run-dir DIR]
 #     implement -> verify (run here, not trusted from the agent) -> fresh read-only review
 #     -> send critical/important findings and verify failures back to the same thread
 #     -> repeat up to N fix rounds -> one FINAL status line.
+#     An agent that is out of quota (Codex's recorded usage at or above the threshold, or
+#     a step failing with a usage-limit error) hands its role to the other agent, unless
+#     --no-fallback; with no agent left the run ends FINAL LIMITED.
 #
 # Single steps (manual control):
 #   agent_run.sh task   --cd DIR --brief FILE [--agent A] [--model M] [--effort E] [--sandbox MODE] ...
@@ -22,7 +26,9 @@
 #
 # Env: EXTERNAL_AGENT_MODEL (codex default model, default gpt-6.1-sol),
 #      EXTERNAL_AGENT_AGY_MODEL (agy default model; no built-in default — ask the user),
-#      EXTERNAL_AGENT_RUNS (run root).
+#      EXTERNAL_AGENT_RUNS (run root), EXTERNAL_AGENT_CODEX_MAX_PCT (skip Codex when its
+#      5-hour or weekly usage is at or above this, default 90). A fallback to agy with no
+#      agy model chosen uses EXTERNAL_AGENT_AGY_MODEL, else gemini-4-argon-medium.
 # Both CLIs must be called with Claude Code's Bash sandbox disabled: inside it Codex is
 # killed (exit 137) and agy cannot reach its own sandbox and credentials.
 
@@ -54,7 +60,7 @@ case "$MODE" in delegate|task|resume|review|models) ;; *) die "unknown mode '$MO
 CD="" BRIEF="" NAME="" THREAD="" RUN_DIR="" VERIFY=""
 AGENT="codex" MODEL="" REVIEW_AGENT="" REVIEW_MODEL=""
 EFFORT="medium" REVIEW_EFFORT="high"
-SANDBOX="workspace-write" NETWORK=0 REVIEW_TARGET=() MAX_FIX=2 DO_REVIEW=1
+SANDBOX="workspace-write" NETWORK=0 REVIEW_TARGET=() MAX_FIX=2 DO_REVIEW=1 FALLBACK=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -74,6 +80,7 @@ while [ $# -gt 0 ]; do
     --verify) VERIFY="$2"; shift 2;;
     --max-fix-rounds) MAX_FIX="$2"; shift 2;;
     --no-review) DO_REVIEW=0; shift;;
+    --no-fallback) FALLBACK=0; shift;;
     --uncommitted) REVIEW_TARGET=(--uncommitted); shift;;
     --base) REVIEW_TARGET=(--base "$2"); shift 2;;
     --commit) REVIEW_TARGET=(--commit "$2"); shift 2;;
@@ -290,6 +297,78 @@ elif cmd == "minor":           # review.json -> minor findings, one per line
     for x in d.get("findings", []):
         if x.get("severity") == "minor":
             print(f"  - {x.get('location', '')}: {x.get('problem', '')}")
+
+elif cmd == "codex-usage":     # codex home, max % -> CU_SHOW / CU_OVER shell assignments
+    # Codex records the account's quota in every session file (token_count events), so
+    # the newest one says how much is left before this run starts.
+    import datetime, glob, os, time
+    home, max_pct, now = args[0], float(args[1]), time.time()
+    files = sorted(glob.glob(os.path.join(home, "sessions", "*", "*", "*", "rollout-*.jsonl")))[-20:]
+    rl = None
+    for f in sorted(files, key=os.path.getmtime, reverse=True):
+        try:
+            lines = open(f, encoding="utf-8", errors="replace").read().splitlines()
+        except OSError:
+            continue
+        for l in reversed(lines):
+            if '"rate_limits"' not in l:
+                continue
+            try:
+                rl = (json.loads(l).get("payload") or {}).get("rate_limits")
+            except ValueError:
+                rl = None
+            if isinstance(rl, dict):
+                break
+            rl = None
+        if rl:
+            break
+    show, over = [], ""
+    reached = (rl or {}).get("rate_limit_reached_type")
+    for key in ("primary", "secondary"):
+        w = (rl or {}).get(key) or {}
+        if "used_percent" not in w:
+            continue
+        mins, resets = w.get("window_minutes") or 0, w.get("resets_at") or 0
+        name = {300: "5h", 10080: "week"}.get(mins, f"{mins}m")
+        live = resets > now          # a window past its reset time starts again at 0
+        pct = float(w["used_percent"]) if live else 0.0
+        show.append(f"{name}={pct:g}%")
+        when = datetime.datetime.fromtimestamp(resets).strftime("%H:%M" if resets - now < 86400 else "%a %H:%M")
+        if live and not over and (pct >= max_pct or reached == key):
+            over = f"{name} window at {pct:g}% (resets {when})"
+    print(f"CU_SHOW='{' '.join(show)}' CU_OVER='{over}'")
+
+elif cmd == "limit-check":     # failed stage dir -> why it hit a usage limit; exit 1 if it didn't
+    import re
+    d, texts = args[0], []
+    try:
+        texts.append(open(f"{d}/stderr.log", encoding="utf-8", errors="replace").read()[-20000:])
+    except OSError:
+        pass
+    try:                       # only error events: agent messages may mention limits
+        for line in open(f"{d}/events.jsonl", encoding="utf-8", errors="replace"):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("type") in ("error", "turn.failed"):
+                texts.append(json.dumps(e, ensure_ascii=False))
+    except OSError:
+        pass
+    agy = load(f"{d}/agy.json")
+    if isinstance(agy, dict):
+        texts.append(str(agy.get("error") or ""))
+    t = "\n".join(texts)
+    if not re.search(r"usage limit|rate.?limit|too many requests|\b429\b|quota|RESOURCE_EXHAUSTED", t, re.I):
+        sys.exit(1)
+    if re.search(r"usage limit", t, re.I):
+        why = "usage limit"
+    elif re.search(r"quota|RESOURCE_EXHAUSTED", t, re.I):
+        why = "quota exhausted"
+    else:
+        why = "rate limited"
+    m = re.search(r"try again (?:at|in) [^.\"\n]+", t, re.I)
+    print(why + (f", {m.group(0)}" if m else ""))
 PY
 }
 
@@ -478,22 +557,78 @@ git_tail() {
   fi
 }
 
+# ---- usage limits ---------------------------------------------------------------------
+# An agent that runs out of quota stays out for the rest of the run, and its role
+# (implement or review) moves to the other agent unless --no-fallback.
+
+LIMITED="" LIMIT_NOTES="" LAST_LIMIT="" FALLBACKS="" NOTES=""
+CODEX_MAX_PCT="${EXTERNAL_AGENT_CODEX_MAX_PCT:-90}"
+CU_CHECKED=0 CU_SHOW="" CU_OVER=""
+AGENT0="$AGENT" MODEL0="$MODEL" REVIEW_AGENT0="$REVIEW_AGENT" REVIEW_MODEL0="$REVIEW_MODEL"
+
+is_limited() { case " $LIMITED " in *" $1 "*) return 0;; esac; return 1; }
+mark_limited() {  # agent reason
+  LIMITED="$LIMITED $1" LAST_LIMIT="$2"
+  LIMIT_NOTES="${LIMIT_NOTES:+$LIMIT_NOTES; }$1 ($2)"
+}
+codex_quota_ok() {  # reads Codex's last recorded usage once per run
+  if [ $CU_CHECKED -eq 0 ]; then
+    CU_CHECKED=1
+    eval "$(py codex-usage "${CODEX_HOME:-$HOME/.codex}" "$CODEX_MAX_PCT")"
+    if [ -n "$CU_OVER" ]; then
+      mark_limited codex "$CU_OVER"
+      NOTES="${NOTES:+$NOTES
+}note: codex skipped: $CU_OVER"
+    fi
+  fi
+  ! is_limited codex
+}
+role_model() {  # agent -> the model chosen for it in this run, else its fallback default
+  if [ "$1" = "$AGENT0" ]; then printf '%s' "$MODEL0"
+  elif [ "$1" = "$REVIEW_AGENT0" ]; then printf '%s' "$REVIEW_MODEL0"
+  elif [ "$1" = agy ]; then printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-gemini-4-argon-medium}"
+  else default_model "$1"; fi
+}
+switch_role() {  # implement|review -> gives the role to the other agent; 1 if none is left
+  local cur new m
+  if [ "$1" = implement ]; then cur="$AGENT"; else cur="$REVIEW_AGENT"; fi
+  [ "$cur" = codex ] && new=agy || new=codex
+  [ $FALLBACK -eq 1 ] && command -v "$new" >/dev/null 2>&1 && ! is_limited "$new" || return 1
+  [ "$new" = codex ] && { codex_quota_ok || return 1; }
+  m="$(role_model "$new")"
+  if [ "$1" = implement ]; then AGENT="$new" MODEL="$m"; else REVIEW_AGENT="$new" REVIEW_MODEL="$m"; fi
+  FALLBACKS="${FALLBACKS:+$FALLBACKS
+}fallback: $1 $cur->$new/$m ($cur: $LAST_LIMIT)"
+}
+
 # ---- delegate: the pipeline -----------------------------------------------------------
 
 if [ "$MODE" = "delegate" ]; then
-  START=$(date +%s); N=0
+  START=$(date +%s); N=0 THREAD_ID="" FAMILY_NOTE="" NO_IMPL=0
   cp "$BRIEF" "$RUN_DIR/brief.md"
   stage() { N=$((N + 1)); STAGE_DIR="$RUN_DIR/$(printf '%02d' $N)-$1"; mkdir -p "$STAGE_DIR"; }
   line() { printf 'stage %-11s %-18s %s\n' "$1" "$2" "$3"; }
-  echo "agents: implement=$AGENT/$MODEL review=$REVIEW_AGENT/$REVIEW_MODEL"
+
+  # Codex's quota is known before it starts; agy's only shows when a step fails.
+  if [ "$AGENT" = codex ] || { [ "$REVIEW_AGENT" = codex ] && [ $DO_REVIEW -eq 1 ]; }; then
+    codex_quota_ok
+  fi
+  is_limited "$AGENT" && { switch_role implement || NO_IMPL=1; }
+  [ $DO_REVIEW -eq 1 ] && is_limited "$REVIEW_AGENT" && switch_role review
+  echo "agents: implement=$AGENT/$MODEL review=$REVIEW_AGENT/$REVIEW_MODEL${CU_SHOW:+ usage: codex $CU_SHOW}"
+  [ -n "$NOTES" ] && echo "$NOTES"
 
   finish() {  # final_status [detail]
+    local c="${CONCERNS:-}"
+    [ -n "$FAMILY_NOTE" ] && c="${c:+$c; }$FAMILY_NOTE"
     {
       echo "FINAL $1"
       [ -n "${2:-}" ] && echo "$2"
+      [ -n "$FALLBACKS" ] && echo "$FALLBACKS"
+      [ -n "$LIMIT_NOTES" ] && echo "limits: $LIMIT_NOTES"
       echo "thread_id=$THREAD_ID"
       echo "files: ${FILES:-(none)}"
-      [ -n "${CONCERNS:-}" ] && echo "concerns: $CONCERNS"
+      [ -n "$c" ] && echo "concerns: $c"
       [ -n "${MINOR:-}" ] && { echo "minor findings (not fixed):"; echo "$MINOR"; }
       echo "agent_tokens: in=$(ktok $TOT_IN) (cached $(ktok $TOT_CACHED)) out=$(ktok $TOT_OUT)"
       echo "elapsed_seconds=$(( $(date +%s) - START ))"
@@ -511,14 +646,46 @@ if [ "$MODE" = "delegate" ]; then
     SUMMARY="$(py field "$1/report.json" summary)"
   }
 
+  hit_limit() {  # stage_name agent -> LIMITED line and the agent marked out; 1 if not a limit
+    local why; why="$(py limit-check "$STAGE_DIR")" || return 1
+    line "$1" LIMITED "$2: $why"; mark_limited "$2" "$why"
+  }
+
+  handover() {  # -> path of a brief for an agent taking over from one that ran out
+    local f="$RUN_DIR/handover-$N.md"
+    { if [ "$SANDBOX" != "read-only" ]; then
+        printf 'Another agent started this task and stopped partway: it hit its usage limit. Its changes may already be in the working tree. Check `git status` and `git diff` first, keep what is right, and finish the task.\n\n'
+      fi
+      cat "$RUN_DIR/brief.md"
+      if [ -n "$FIX_FILE" ]; then
+        printf '\n\nAn independent check of the work so far found the problems below. Fixing them is part of finishing the task.\n\n'
+        cat "$FIX_FILE"
+      fi
+    } > "$f"
+    printf '%s' "$f"
+  }
+
+  run_impl() {  # stage_name brief -> a fresh implementer task; on a limit the other agent takes over
+    local brief="$2"
+    while :; do
+      stage "$1"
+      backend_task "$AGENT" "$MODEL" "$STAGE_DIR" "$brief" "$EFFORT"
+      add_tokens "$STAGE_DIR"; THREAD_ID="$EV_THREAD"
+      [ $RC -eq 0 ] && [ -s "$STAGE_DIR/report.json" ] && return 0
+      if ! hit_limit "$1" "$AGENT"; then
+        line "$1" FAILED "exit=$RC"
+        finish FAILED "agent error, see $STAGE_DIR/stderr.log: $(tail -n 3 "$STAGE_DIR/stderr.log" | tr '\n' ' ')"
+      fi
+      switch_role implement || finish LIMITED
+      brief="$(handover)"
+    done
+  }
+
+  [ $NO_IMPL -eq 1 ] && finish LIMITED
+
   # 1. implement
-  stage implement
-  backend_task "$AGENT" "$MODEL" "$STAGE_DIR" "$RUN_DIR/brief.md" "$EFFORT"
-  add_tokens "$STAGE_DIR"; THREAD_ID="$EV_THREAD"
-  if [ $RC -ne 0 ] || [ ! -s "$STAGE_DIR/report.json" ]; then
-    line implement FAILED "exit=$RC"
-    finish FAILED "agent error, see $STAGE_DIR/stderr.log: $(tail -n 3 "$STAGE_DIR/stderr.log" | tr '\n' ' ')"
-  fi
+  FIX_FILE=""
+  run_impl implement "$RUN_DIR/brief.md"
   read_report "$STAGE_DIR"
   line implement "$STATUS" "in=$(ktok $EV_IN) out=$(ktok $EV_OUT)"
   case "$STATUS" in
@@ -543,17 +710,29 @@ questions: ${QUESTIONS:-(none)}";;
     # 3. review — fresh read-only session, possibly a different agent
     RJSON="" RV_VERDICT=SKIPPED RV_CRIT=0 RV_IMP=0 RV_MINOR=0
     if [ $DO_REVIEW -eq 1 ] && [ -z "$VLOG" ]; then
-      stage review
-      py review-brief "$RUN_DIR/brief.md" "$FILES" > "$STAGE_DIR/review-brief.md"
-      backend_review "$REVIEW_AGENT" "$REVIEW_MODEL" "$STAGE_DIR" "$STAGE_DIR/review-brief.md" "$REVIEW_EFFORT" --uncommitted
-      add_tokens "$STAGE_DIR"
-      if [ -s "$STAGE_DIR/review.json" ]; then
-        RJSON="$STAGE_DIR/review.json"; eval "$(py review-counts "$RJSON")"
-        line review "$RV_VERDICT" "critical=$RV_CRIT important=$RV_IMP minor=$RV_MINOR"
-      else
+      while :; do
+        if is_limited "$REVIEW_AGENT" && ! switch_role review; then
+          line review SKIPPED "no agent with quota left"
+          CONCERNS="${CONCERNS:+$CONCERNS; }independent review skipped: usage limits"
+          break
+        fi
+        stage review
+        py review-brief "$RUN_DIR/brief.md" "$FILES" > "$STAGE_DIR/review-brief.md"
+        backend_review "$REVIEW_AGENT" "$REVIEW_MODEL" "$STAGE_DIR" "$STAGE_DIR/review-brief.md" "$REVIEW_EFFORT" --uncommitted
+        add_tokens "$STAGE_DIR"
+        if [ -s "$STAGE_DIR/review.json" ]; then
+          RJSON="$STAGE_DIR/review.json"; eval "$(py review-counts "$RJSON")"
+          line review "$RV_VERDICT" "critical=$RV_CRIT important=$RV_IMP minor=$RV_MINOR"
+          if [ "$REVIEW_AGENT" = "$AGENT" ] && [ "$REVIEW_AGENT0" != "$AGENT0" ]; then
+            FAMILY_NOTE="review by the same agent family as the implementer (usage limits)"
+          fi
+          break
+        fi
+        hit_limit review "$REVIEW_AGENT" && continue
         line review FAILED "exit=$RC (continuing without review)"
         CONCERNS="${CONCERNS:+$CONCERNS; }independent review failed (exit=$RC, see $STAGE_DIR/stderr.log)"
-      fi
+        break
+      done
     fi
     MINOR="$( [ -n "$RJSON" ] && py minor "$RJSON" )"
 
@@ -566,15 +745,25 @@ questions: ${QUESTIONS:-(none)}";;
       finish NEEDS_ATTENTION "unresolved after $ROUND fix round(s): $( [ -n "$VLOG" ] && echo "verify failing ($VLOG)"; [ $BLOCKING -gt 0 ] && echo "$BLOCKING blocking finding(s) in $RJSON")"
     fi
 
-    # 4. fix round on the implementer's own thread
+    # 4. fix round on the implementer's own thread (a new agent's, if it ran out)
     ROUND=$((ROUND + 1))
     stage "fix-$ROUND"
-    py fix-brief "$RJSON" "$VLOG" "$VERIFY" > "$STAGE_DIR/fix-brief.md"
-    backend_resume "$AGENT" "$MODEL" "$STAGE_DIR" "$THREAD_ID" "$STAGE_DIR/fix-brief.md" "$EFFORT"
-    add_tokens "$STAGE_DIR"
-    if [ $RC -ne 0 ] || [ ! -s "$STAGE_DIR/report.json" ]; then
-      line "fix-$ROUND" FAILED "exit=$RC"
-      finish FAILED "agent error during fix round, see $STAGE_DIR/stderr.log"
+    FIX_FILE="$STAGE_DIR/fix-brief.md"
+    py fix-brief "$RJSON" "$VLOG" "$VERIFY" > "$FIX_FILE"
+    if is_limited "$AGENT"; then        # it ran out while reviewing: its thread can't go on
+      switch_role implement || finish LIMITED
+      run_impl "fix-$ROUND" "$(handover)"
+    else
+      backend_resume "$AGENT" "$MODEL" "$STAGE_DIR" "$THREAD_ID" "$FIX_FILE" "$EFFORT"
+      add_tokens "$STAGE_DIR"
+      if [ $RC -ne 0 ] || [ ! -s "$STAGE_DIR/report.json" ]; then
+        if ! hit_limit "fix-$ROUND" "$AGENT"; then
+          line "fix-$ROUND" FAILED "exit=$RC"
+          finish FAILED "agent error during fix round, see $STAGE_DIR/stderr.log"
+        fi
+        switch_role implement || finish LIMITED
+        run_impl "fix-$ROUND" "$(handover)"
+      fi
     fi
     read_report "$STAGE_DIR"
     line "fix-$ROUND" "$STATUS" "in=$(ktok $EV_IN) out=$(ktok $EV_OUT)"
@@ -619,7 +808,8 @@ if [ -n "$OUT" ]; then
     *) cat "$OUT"; echo;;
   esac
 else
-  echo "status=NO_REPORT"
+  if WHY="$(py limit-check "$RUN_DIR")"; then echo "status=LIMITED $AGENT: $WHY"
+  else echo "status=NO_REPORT"; fi
   echo "--- stderr tail ---"; tail -n 15 "$RUN_DIR/stderr.log" 2>/dev/null
   [ -f "$RUN_DIR/events.jsonl" ] && { echo "--- events tail ---"; tail -n 5 "$RUN_DIR/events.jsonl" | cut -c1-400; }
 fi

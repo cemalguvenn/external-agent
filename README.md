@@ -171,6 +171,8 @@ $S delegate --agent codex --sandbox read-only --cd ~/proje --brief soru.md   # s
 | `agy needs a model` | Listelenen modellerden birini seçin |
 | `jetski: no output produced … permission` | agy'yi doğrudan değil betikle çağırın |
 | Çok yavaş Antigravity çalıştırması | Proje ve geçici kopya klasörü ev dizini altında olmalı |
+| `stage … LIMITED`, `fallback:` satırı | Bir ajanın kotası bitti; görevi diğer ajan devraldı. Codex, kotası %90'ı geçince (`EXTERNAL_AGENT_CODEX_MAX_PCT`) baştan atlanır. Tek ajan isteniyorsa `--no-fallback`. |
+| `FINAL LIMITED` | İki ajanın da kotası bitti; `limits:` satırında ne zaman sıfırlanacağı yazar |
 
 Ayrıntılar: `external-agent/references/codex-cli.md` ve `antigravity-cli.md`.
 

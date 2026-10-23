@@ -36,6 +36,15 @@
 - Never use `--dangerously-bypass-approvals-and-sandbox`.
 - Models and effort levels available to the account are cached in
   `~/.codex/models_cache.json` (`slug`, `supported_reasoning_levels`).
+- **Quota.** Every session file `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`
+  (`~/.codex` by default) carries the account's limits in its `token_count` events:
+  `payload.rate_limits.primary` (5-hour window) and `.secondary` (weekly), each with
+  `used_percent`, `window_minutes` and `resets_at` (epoch seconds), plus
+  `rate_limit_reached_type`. The limits are per account, so any recent session, from
+  the app or the CLI, gives the current figure. The script reads the newest one before a
+  run and skips Codex at `EXTERNAL_AGENT_CODEX_MAX_PCT` (default 90).
+- Out of quota, a run fails with "You've hit your usage limit. … try again at 2:34 AM."
+  The script reports that stage as `LIMITED` and moves the role to agy.
 - An `item.completed` of type `error` about deprecated config keys (e.g.
   `[features].codex_hooks`) is a warning from the user's config, not a task failure.
 
@@ -47,7 +56,7 @@
 | `command not found: codex` / broken symlink in `/opt/homebrew/bin/codex` | Binary removed (cleanup tools such as Mole can do this) | Ask the user to run `brew reinstall --cask codex` |
 | `status=NO_REPORT` | Codex crashed, hit a limit, or was interrupted | Read `stderr.log` and the tail of `events.jsonl` in the run dir |
 | Auth / 401 / "log in" errors | Codex session expired | User runs `codex login` themselves |
-| Rate limit / quota errors | ChatGPT plan limits | Wait, lower effort, or do the task yourself; tell the user |
+| `stage … LIMITED codex: usage limit` / `note: codex skipped` | ChatGPT plan limits | Automatic: agy takes over. If `FINAL LIMITED`, do it yourself or wait for the reset time on the `limits:` line; tell the user |
 | Build tool can't download | Sandbox has no network | `--network`, or install deps yourself before dispatch |
 | Codex edits files outside scope | Brief scope too loose | Revert those files, resume with an explicit "only touch X" |
 

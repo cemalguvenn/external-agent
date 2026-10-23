@@ -116,6 +116,16 @@ Run it with `run_in_background`. It takes 1-10 minutes, and you're notified when
 exits, so don't poll. Prepare the next brief meanwhile, but never start a second
 **writer** in the same working tree (see §6).
 
+**Usage limits.** Before using Codex, the script reads Codex's last recorded quota and
+shows it on the `agents:` line (`usage: codex 5h=40% week=12%`). At 90% or more
+(`EXTERNAL_AGENT_CODEX_MAX_PCT`) Codex is skipped. A step that fails with a usage-limit
+error is marked `LIMITED`. Either way the role (implement or review) moves to the other
+agent for the rest of the run: an implementer that takes over is told to check the
+partial work in the tree, and gets the fix list if it was mid-fix. A fallback to agy
+with no agy model chosen uses `EXTERNAL_AGENT_AGY_MODEL`, else `gemini-4-argon-medium`.
+agy reports no usage figures, so its limits only show when a step fails. Pass
+`--no-fallback` when the user insists on one agent.
+
 For a read-only investigation, add `--sandbox read-only`. There's nothing to verify or
 review then, and the answer comes back in the `answer:` line. Codex investigates in
 its read-only sandbox; agy works in a disposable copy and may run code there. Check
@@ -124,8 +134,12 @@ line), because nobody else reviews a read-only answer.
 
 ## 5. Act on the FINAL line
 
-The output is an `agents:` line, a few `stage ...` lines, then `FINAL <status>`,
-`files:`, any `concerns:` and `minor findings`, agent token totals, and `git:`.
+The output is an `agents:` line, a few `stage ...` lines, then `FINAL <status>`, any
+`fallback:` and `limits:` lines, `files:`, any `concerns:` and `minor findings`, agent
+token totals, and `git:`. A `fallback:` line means another agent took over a role:
+mention it in your report, above all when the user had named the agent. An agent on
+the `limits:` line stays out of quota until the reset time shown, so route the
+session's next tasks elsewhere.
 
 | FINAL | What to do |
 |---|---|
@@ -134,6 +148,7 @@ The output is an `agents:` line, a few `stage ...` lines, then `FINAL <status>`,
 | `NEEDS_CONTEXT` | Answer the questions and resume the same thread: `agent_run.sh resume --agent <same> --thread <id> --brief <answers.md>`, then verify. |
 | `BLOCKED` | Change something before retrying: more context, higher effort, a stronger model or the other agent, a smaller task, or do it yourself. The same brief gets the same result. |
 | `NEEDS_ATTENTION` | Fix rounds ran out. Now open the referenced `verify.log` / `review.json`, and only those. Decide: fix it yourself if small, re-brief (perhaps to the other agent), or escalate to the user. |
+| `LIMITED` | No agent had quota left (or `--no-fallback`). The `limits:` line says who ran out and when it resets; `git:` shows any partial work. Finish it yourself if small, otherwise tell the user and wait for the reset. |
 | `FAILED` | The CLI itself errored. See the `stderr.log` named in the output and the CLI's reference file. |
 | `WARNING: HEAD moved` | The agent committed despite the brief. Tell the user; rewriting history needs their go-ahead. |
 
