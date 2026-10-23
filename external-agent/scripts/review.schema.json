@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "findings"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["APPROVE", "CHANGES_REQUESTED"]
+    },
+    "summary": {
+      "type": "string",
+      "description": "Overall assessment in two or three sentences."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "location", "problem", "fix"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "important", "minor"] },
+          "location": { "type": "string", "description": "file:line or file:function" },
+          "problem": { "type": "string" },
+          "fix": { "type": "string", "description": "Concrete change that resolves it." }
+        }
+      }
+    }
+  }
+}

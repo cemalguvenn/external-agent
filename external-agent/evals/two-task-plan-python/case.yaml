@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: two-task-plan-python
+expected_outcome: |
+  Both plan tasks (utilization and fits) are implemented in cargo/packing.py with
+  unittest tests in tests/test_packing.py, implemented by Codex (gpt-6.1-sol), and
+  independently verified by Claude: tests run by Claude, edge cases checked, a
+  separate review pass done, problems sent back to Codex. No commits are made.
+  The final message summarizes per-task status.
+context:
+  scaffold_script: place-files.sh

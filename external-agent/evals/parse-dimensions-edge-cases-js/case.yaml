@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: parse-dimensions-edge-cases-js
+expected_outcome: |
+  parseDimensions in src/parseDims.js handles every accepted and rejected input in
+  TASK.md (decimal commas, × separator, unit case, rounding, rejecting 1e3, empty,
+  too-small values, non-strings). Codex wrote it; Claude ran the tests itself, probed
+  edge cases beyond Codex's own tests, and sent any gaps back to Codex. No commits.
+context:
+  scaffold_script: place-files.sh

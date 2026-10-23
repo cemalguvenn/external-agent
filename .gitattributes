@@ -1,0 +1,4 @@
+# Keep LF everywhere so bash scripts still run after a Windows checkout
+# (core.autocrlf would otherwise turn agent_run.sh into CRLF and break it).
+* text=auto eol=lf
+*.ps1 text eol=crlf

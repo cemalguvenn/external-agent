@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "files_changed", "verification", "concerns", "questions"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED"]
+    },
+    "summary": {
+      "type": "string",
+      "description": "What was done (or attempted), in a few sentences."
+    },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths relative to the working root that were created, modified or deleted."
+    },
+    "verification": {
+      "type": "array",
+      "description": "Each command run to verify the work and its actual outcome.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "result"],
+        "properties": {
+          "command": { "type": "string" },
+          "result": { "type": "string", "description": "e.g. '12 passed', 'exit 1: ImportError ...'" }
+        }
+      }
+    },
+    "concerns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Doubts about correctness, scope or design. Empty if none."
+    },
+    "questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What the controller must answer before the task can be finished. Empty if none."
+    }
+  }
+}
