@@ -88,7 +88,8 @@ reviewer. Name the files it may touch and forbid commits.
 
 Pick a **verification command** the script can run from the repo root, e.g.
 `python3 -m unittest discover -s tests -t .` or `npm test`. It should cover the new
-behaviour, so ask the agent in the brief to add tests there.
+behaviour, so ask the agent in the brief to add tests there. On Windows write `python`,
+not `python3`: a python.org install has no `python3`, only the Microsoft Store stub.
 
 | Effort | Use for |
 |---|---|

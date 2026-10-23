@@ -43,6 +43,9 @@ for c in python3 python; do
   fi
 done
 [ -n "$PY_BIN" ] || die "Python 3.8+ not found (tried python3, python)"
+# On Windows Python's stdout to a pipe uses the ANSI code page (e.g. cp1254), which
+# cannot encode much of what agents write; bash reads it as UTF-8 anyway.
+py_run() { PYTHONIOENCODING=utf-8 "$PY_BIN" "$@"; }
 
 [ $# -ge 1 ] || die "usage: agent_run.sh delegate|task|resume|review|models [options]"
 MODE="$1"; shift
@@ -99,11 +102,12 @@ if [ "$MODE" = "models" ]; then
   need_cli "$AGENT"
   case "$AGENT" in
     agy)   agy models 2>/dev/null | grep -v '^Fetching';;
-    codex) "$PY_BIN" - <<'PY'
+    codex) py_run - <<'PY'
 import json, os
-p = os.path.expanduser("~/.codex/models_cache.json")
+p = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "models_cache.json")
 try:
-    d = json.load(open(p))
+    with open(p, encoding="utf-8") as f:
+        d = json.load(f)
 except (OSError, ValueError):
     raise SystemExit("no ~/.codex/models_cache.json yet (run codex once)")
 for m in d.get("models", d):
@@ -155,6 +159,9 @@ if [ -z "$RUN_DIR" ]; then
   RUN_DIR="$ROOT/$(basename "$CD")/$(date +%Y%m%d-%H%M%S)-$MODE-$SLUG"
 fi
 mkdir -p "$RUN_DIR" || die "cannot create run dir $RUN_DIR"
+# Git Bash paths like /tmp/... mean nothing to Windows tools (Claude's Read included);
+# C:/Users/... works in both.
+command -v cygpath >/dev/null 2>&1 && RUN_DIR="$(cygpath -m "$RUN_DIR")"
 
 IS_GIT=0 BASE_SHA=""
 if git -C "$CD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -165,7 +172,7 @@ fi
 
 # ---- Python helpers -------------------------------------------------------------------
 # One place for all JSON handling so the bash stays readable.
-py() { "$PY_BIN" - "$@" <<'PY'
+py() { py_run - "$@" <<'PY'
 import json, shutil, sys
 cmd, args = sys.argv[1], sys.argv[2:]
 
@@ -224,8 +231,12 @@ elif cmd == "meta":            # stage dir -> thread/tokens/errors as shell assi
 
 elif cmd == "agy-extract":     # agy.json -> report file (structured answer), exit 1 if none
     agy = load(args[0]) or {}
-    obj = last_json_object(agy.get("response") or "")
-    if agy.get("status") != "SUCCESS" or obj is None:
+    # A transient API error late in the turn can mark the run ERROR even though the
+    # schema-checked answer arrived, so structured_output counts whatever the status.
+    obj = agy.get("structured_output")
+    if not isinstance(obj, dict):
+        obj = last_json_object(agy.get("response") or "") if agy.get("status") == "SUCCESS" else None
+    if obj is None:
         sys.exit(1)
     with open(args[1], "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
@@ -298,6 +309,17 @@ agy_footer() {  # schema_file
   cat "$1"
 }
 
+# Windows caps a whole command line at 32,767 characters (Git Bash fails with "Argument
+# list too long"), and a review prompt with the diff pasted in can be far longer. Such a
+# prompt stays in its file, and agy is pointed at it instead.
+agy_prompt_args() {  # prompt_file -> PROMPT_ARGS
+  local f="$1" d p
+  if [ "$(wc -c < "$f")" -lt 24000 ]; then PROMPT_ARGS=(-p "$(cat "$f")"); return; fi
+  d="$(dirname "$f")"; p="$f"
+  if command -v cygpath >/dev/null 2>&1; then d="$(cygpath -w "$d")"; p="$(cygpath -w "$f")"; fi
+  PROMPT_ARGS=(-p "Your complete instructions are in the file $p. Read that whole file first, then follow it exactly. It is the one file outside the current directory you may read." --add-dir "$d")
+}
+
 agy_common() {  # model effort
   COMMON=(--model "$1" --print-timeout 30m --output-format json)
   # Model ids like gemini-3.8-flash-medium already carry their effort level.
@@ -362,7 +384,8 @@ backend_task() {  # agent model stage_dir brief effort
         agy_footer "$IMPL_SCHEMA"
       } > "$dir/agy-prompt.md"
       if [ "$SANDBOX" = "read-only" ]; then make_snapshot; where="$SNAP"; fi
-      ( cd "$where" && agy -p "$(cat "$dir/agy-prompt.md")" \
+      agy_prompt_args "$dir/agy-prompt.md"
+      ( cd "$where" && agy "${PROMPT_ARGS[@]}" \
           "${COMMON[@]}" --dangerously-skip-permissions --sandbox --json-schema "$IMPL_SCHEMA" ) \
         > "$dir/agy.json" 2> "$dir/stderr.log"
       RC=$?
@@ -384,7 +407,8 @@ backend_resume() {  # agent model stage_dir thread brief effort
     agy)
       agy_common "$model" "$effort"
       { cat "$brief"; agy_footer "$IMPL_SCHEMA"; } > "$dir/agy-prompt.md"
-      ( cd "$CD" && agy -p "$(cat "$dir/agy-prompt.md")" --conversation "$thread" \
+      agy_prompt_args "$dir/agy-prompt.md"
+      ( cd "$CD" && agy "${PROMPT_ARGS[@]}" --conversation "$thread" \
           "${COMMON[@]}" --dangerously-skip-permissions --sandbox --json-schema "$IMPL_SCHEMA" ) \
         > "$dir/agy.json" 2> "$dir/stderr.log"
       RC=$?
@@ -428,7 +452,8 @@ backend_review() {  # agent model stage_dir brief-or-empty effort target...
       } > "$dir/review-prompt.md"
       agy_common "$model" "$effort"
       make_snapshot
-      ( cd "$SNAP" && agy -p "$(cat "$dir/review-prompt.md")" "${COMMON[@]}" \
+      agy_prompt_args "$dir/review-prompt.md"
+      ( cd "$SNAP" && agy "${PROMPT_ARGS[@]}" "${COMMON[@]}" \
           --dangerously-skip-permissions --sandbox --json-schema "$REVIEW_SCHEMA" ) \
         > "$dir/agy.json" 2> "$dir/stderr.log"
       RC=$?
@@ -590,7 +615,7 @@ if [ -n "$OUT" ]; then
   if [ "$MODE" = "review" ]; then echo "--- review (from $AGENT: triage before acting) ---"
   else echo "--- report (from $AGENT: claims, not verified) ---"; fi
   case "$OUT" in
-    *.json) "$PY_BIN" -m json.tool "$OUT" 2>/dev/null || cat "$OUT";;
+    *.json) py_run -m json.tool "$OUT" 2>/dev/null || cat "$OUT";;
     *) cat "$OUT"; echo;;
   esac
 else

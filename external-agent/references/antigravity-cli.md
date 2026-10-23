@@ -1,4 +1,4 @@
-# Antigravity CLI (`agy`) notes (verified against agy 1.4.5)
+# Antigravity CLI (`agy`) notes (verified against agy 1.4.5 on macOS, 1.4.6 on Windows 11)
 
 ## How the script drives it
 
@@ -13,8 +13,13 @@
 - `--output-format json` prints one object: `conversation_id`, `status` (`SUCCESS`
   on success), `response` (the agent's final text), `usage` (`input_tokens`,
   `output_tokens`, `thinking_tokens`, `cache_read_tokens`), `denied_actions`. With
-  `--json-schema`, the structured answer is the JSON object inside `response`,
-  sometimes after prose. The script extracts the last complete object.
+  `--json-schema`, the structured answer is in `structured_output` and also inside
+  `response`, sometimes after prose. The script takes `structured_output` (even when a
+  late transient API error set `status` to `ERROR`), else the last complete object
+  in `response`.
+- agy has no stdin prompt mode, and Windows caps a command line at 32,767 characters.
+  Prompts over ~24 KB (reviews with a big diff) stay in their file in the run dir; the
+  `-p` value tells agy to read it, and `--add-dir` gives it that folder.
 - **Headless permission model.** Without `--dangerously-skip-permissions`, any write
   or command is auto-denied, and the turn then **ends with an empty response**. So
   `--mode plan` is no use as a read-only mode, and with the bypass on, plan mode did
@@ -37,7 +42,8 @@
   File-edit tools work in trusted workspaces.
 - Trusted workspaces live in `~/.gemini/antigravity-cli/settings.json`
   (`trustedWorkspaces`, e.g. `["/Users/<you>"]`). Projects outside them can't be
-  edited from the terminal.
+  edited from the terminal. On Windows (agy 1.4.6) that file doesn't exist and projects
+  under `%USERPROFILE%` worked without setup.
 - `--print-timeout` defaults to unlimited. The script sets 30m, and on expiry agy
   returns partial output with a warning.
 - Exit codes: 0 ok, 2 usage error, 3 model/agent error with an `AGY_ERROR: {...}` line on

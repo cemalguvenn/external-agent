@@ -154,9 +154,12 @@ $S delegate --agent codex --sandbox read-only --cd ~/proje --brief soru.md   # s
   çalışamaz (sandbox orayı engelliyor).
 - **Antigravity güvenilir alanları:** proje, Antigravity'nin `trustedWorkspaces`
   listesindeki bir klasörün altında olmalı (varsayılan olarak ev dizini).
-- **Windows: gerçek bir Windows makinesinde henüz test edilmedi.** Python ve kopyalama
-  farkları macOS'ta benzetilerek test edildi. Ayrıca:
+- **Windows:** Windows 11 25H2'de (Git Bash, codex-cli 0.163, agy 1.4.6) Codex,
+  Antigravity, karma ve sadece okuma pipeline'ları test edildi. Ayrıca:
   - Antigravity'nin terminal sandbox'ı Windows 11 24H2 gerektirir.
+  - Git for Windows varsayılan kurulumda PATH'e sadece `Git\cmd` ekler; `install.ps1`
+    Git Bash'i `git.exe`'nin yanında bulur, PowerShell'de `bash` olmaması sorun değil.
+  - Verify komutlarında `python3` değil `python` yazın (python.org kurulumunda `python3` yok).
   - Codex'in Windows sandbox'ı sorun çıkarırsa WSL içinde kullanın.
 
 ## Sorun giderme
