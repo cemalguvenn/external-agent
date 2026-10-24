@@ -1,110 +1,109 @@
 # external-agent
 
-**Claude Code için taşeron skill'i.** Claude işi planlar, basit ve orta zorluktaki
-görevleri dış kodlama ajanlarına yaptırır:
+**A subcontractor skill for Claude Code.** Claude plans the work and delegates simple
+to moderately difficult tasks to external coding agents:
 
-- **OpenAI Codex CLI** (varsayılan model `gpt-6.1-sol`)
-- **Google Antigravity CLI** (`agy`, Gemini modelleri)
+- **OpenAI Codex CLI** (default model: `gpt-6.1-sol`)
+- **Google Antigravity CLI** (`agy`, Gemini models)
 
-Ajanın yaptığı iş otomatik olarak doğrulanır ve bağımsız bir incelemeden geçer. Claude
-sadece sorun çıktığında devreye girer. Böylece Claude'un token'ları zor işlere
-(tasarım, karmaşık hata ayıklama, kararlar) kalır, ayak işlerini taşeronlar yapar.
+The agent's work is verified automatically and independently reviewed. Claude steps
+in only when a problem arises, leaving its tokens for difficult work such as design,
+complex debugging, and decisions.
 
-> Superpowers'ın `subagent-driven-development` yaklaşımından esinlenildi. Fark şu:
-> alt ajanlar Claude değil, ayrı CLI'ler.
+> Inspired by Superpowers' `subagent-driven-development` approach. Here, the
+> sub-agents are separate CLIs rather than Claude instances.
 
 ---
 
-## Nasıl çalışır?
+## How it works
 
-Claude her görev için kendi içinde eksiksiz bir görev özeti (brief) yazar ve tek bir
-komutla gönderir:
+Claude writes a self-contained brief for each task and dispatches it with one command:
 
 ```
 Claude ──brief──▶ agent_run.sh delegate
                     │
-                    ├─ 0. kota        : Codex'in son kayıtlı kullanımı okunur (%90 ve üstünde Codex atlanır)
-                    ├─ 1. uygula      : Codex / Antigravity kodu yazar (commit atamaz)
-                    ├─ 2. doğrula     : test komutunu BETİK çalıştırır (ajanın "geçti" demesi yetmez)
-                    ├─ 3. incele      : yeni, salt okunur bir oturum brief'e göre inceler
-                    │                   (istenirse diğer model ailesinden)
-                    ├─ 4. düzelt      : kritik/önemli bulgular aynı oturuma geri gönderilir (en fazla 2 tur)
-                    │   (bir ajanın kotası biterse rolünü diğer ajan devralır)
+                    ├─ 0. quota      : reads Codex's latest recorded usage (skips Codex at 90% or above)
+                    ├─ 1. implement  : Codex / Antigravity writes code (cannot commit)
+                    ├─ 2. verify     : the SCRIPT runs the test command (the agent's "passed" claim is not enough)
+                    ├─ 3. review     : a fresh, read-only session reviews against the brief
+                    │                 (optionally from the other model family)
+                    ├─ 4. fix        : sends critical/important findings back to the same session (up to 2 rounds)
+                    │                 (if one agent runs out of quota, the other takes over its role)
                     └─ FINAL DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | NEEDS_ATTENTION | LIMITED | FAILED
-Claude ◀── tek satır durum + değişen dosyalar + açık kalan notlar
+Claude ◀── one-line status + changed files + unresolved concerns
 ```
 
-`DONE` gelirse Claude değişikliği okumaz, sıradaki göreve geçer. En sonda tüm testleri
-bir kez çalıştırır ve tüm değişikliğe tek bir inceleme yaptırır.
+When the result is `DONE`, Claude moves to the next task without reading the change.
+At the end, it runs all tests once and requests one review of the entire change.
 
-### Kota bitince
+### When a quota runs out
 
-Bir ajanın kullanım limiti dolarsa iş yarıda kalmaz, rolü diğer ajan devralır:
+If an agent reaches its usage limit, the other agent takes over:
 
-- **Başlamadan önce:** Codex hesabın kotasını oturum dosyalarına yazar (5 saatlik ve
-  haftalık pencere). Betik en yenisini okur ve ilk satırda gösterir:
-  `usage: codex 5h=40% week=12%`. Pencerelerden biri %90'ı geçtiyse Codex baştan atlanır.
-- **Görev sırasında:** bir adım "usage limit" / `RESOURCE_EXHAUSTED` gibi bir hatayla
-  düşerse o adım `LIMITED` olarak işaretlenir ve ajan çalıştırmanın geri kalanında
-  kullanılmaz.
-  - *Uygulama:* diğer ajan baştan başlar; yarım kalan değişikliklerin ağaçta olabileceği
-    ona söylenir.
-  - *Düzeltme turu:* diğer ajan görev özetini ve düzeltme listesini birlikte alır.
-  - *İnceleme:* diğer ajan inceler. Farklı aileden inceleme istenmişti ama aynı aileye
-    düştüyse `concerns:` satırında belirtilir.
-- **İkisi de bitmişse:** `FINAL LIMITED` döner; `limits:` satırında kimin ne zaman
-  sıfırlanacağı yazar. İnceleme sırasında bittiyse inceleme atlanır ve sonuç
-  `DONE_WITH_CONCERNS` olur.
+- **Before starting:** Codex writes its account quota to session files (5-hour and
+  weekly windows). The script reads the latest record and shows it on the first line:
+  `usage: codex 5h=40% week=12%`. If either window reaches 90%, Codex is skipped.
+- **During a task:** If a step fails with an error such as "usage limit" or
+  `RESOURCE_EXHAUSTED`, it is marked `LIMITED` and that agent is not used for the
+  rest of the run.
+  - *Implementation:* the other agent starts over and is told that partial changes
+    may already be in the working tree.
+  - *Fix round:* the other agent receives both the brief and the fix list.
+  - *Review:* the other agent reviews. If a review from a different model family was
+    requested but the fallback uses the same family, the `concerns:` line says so.
+- **If both run out:** the result is `FINAL LIMITED`; the `limits:` line shows when
+  each quota resets. If this happens during review, review is skipped and the result
+  is `DONE_WITH_CONCERNS`.
 
-Antigravity'ye düşüldüğünde model seçilmemişse `EXTERNAL_AGENT_AGY_MODEL`, o da yoksa
-`gemini-4-argon-medium` kullanılır. Devralma `fallback:` satırında görünür, Claude da
-raporunda bunu belirtir. Tek bir ajanda ısrar ediyorsanız `--no-fallback`.
+When falling back to Antigravity, the script uses `EXTERNAL_AGENT_AGY_MODEL` if set,
+or `gemini-4-argon-medium` otherwise. The `fallback:` line identifies the handoff;
+Claude also mentions it in its report. Use `--no-fallback` to insist on one agent.
 
-## Test sonuçları
+## Test results
 
-Aynı 3 senaryo kullanıldı: iki görevlik bir Python planı, kenar durumu yoğun bir JS
-ayrıştırıcı ve kodu değiştirmeden hata araştırma. Değerlendirme, ajanların görmediği
-gizli testlerle yapıldı. Denetleyici her durumda Claude Opus 5.5.
+The same three scenarios were used: a two-task Python plan, a JavaScript parser with
+many edge cases, and a read-only bug investigation. Hidden tests, unseen by the
+agents, were used for evaluation. Claude Opus 5.5 was the controller in every case.
 
-| Yapılandırma | Başarı | Ajan süresi (plan / ayrıştırıcı / araştırma) | Not |
+| Configuration | Success | Agent time (plan / parser / investigation) | Notes |
 |---|---|---|---|
-| Skill olmadan, Claude + Codex | %93 | – | Kodda 2 gerçek hata kaldı (kesirli tam dolu kutu, NaN) |
-| **Skill + Codex (gpt-6.1-sol)** | **%100** | 131 sn / – / 74 sn | Bağımsız inceleme gerçek hataları yakaladı |
-| **Skill + Antigravity (Gemini 4 Argon)** | **%100** | 204 sn / 149 sn / 83 sn | Codex'e yakın süre, çok daha az token |
-| Skill + Antigravity (Gemini 3.8 Flash) | %100 | 373 sn / 605 sn / 170 sn | Doğru ama 2-4 kat yavaş ve daha çok token |
+| Without the skill, Claude + Codex | 93% | – | Two real bugs remained (fractional exactly-full container, NaN) |
+| **Skill + Codex (gpt-6.1-sol)** | **100%** | 131 s / – / 74 s | Independent review caught real bugs |
+| **Skill + Antigravity (Gemini 4 Argon)** | **100%** | 204 s / 149 s / 83 s | Similar to Codex in speed, with far fewer tokens |
+| Skill + Antigravity (Gemini 3.8 Flash) | 100% | 373 s / 605 s / 170 s | Correct, but 2–4 times slower and used more tokens |
 
-Ayrıştırıcı senaryosunun Codex çalıştırması farklı bir modda yapıldığı için süresi
-kıyaslanamıyor, tabloda bu yüzden "–" var.
+The Codex run for the parser scenario used a different mode, so its time is not
+comparable and is shown as “–”.
 
-Claude tarafındaki token kullanımı taşerondan bağımsız olarak çalıştırma başına
-yaklaşık 75-98 bin. Bunun yaklaşık 60 bini her Claude oturumunun sabit yükü.
+Claude's token usage was about 75–98k per run regardless of the subcontractor;
+roughly 60k of that was the fixed overhead of each Claude session.
 
 ---
 
-## Gereksinimler
+## Requirements
 
 | | macOS / Linux | Windows |
 |---|---|---|
 | Claude Code | ✓ | ✓ |
-| bash | sistemde var (macOS'un bash 3.2'si yeterli) | **Git for Windows** (Git Bash). Claude Code da Bash aracı için bunu kullanır |
-| Python 3.8+ | `python3` | `python` (betik ikisini de dener; Microsoft Store kısayolunu atlar) |
-| git | ✓ | ✓ (Git for Windows ile gelir) |
-| En az bir taşeron | `codex` ve/veya `agy`, giriş yapılmış olarak | aynı |
+| bash | Included with the system (macOS bash 3.2 is sufficient) | **Git for Windows** (Git Bash); Claude Code uses it for its Bash tool |
+| Python 3.8+ | `python3` | `python` (the script tries both and skips the Microsoft Store stub) |
+| git | ✓ | ✓ (included with Git for Windows) |
+| At least one subcontractor | `codex` and/or `agy`, signed in | Same |
 
-- **Codex CLI:** `brew install --cask codex` ya da `npm i -g @openai/codex`, ardından
+- **Codex CLI:** run `brew install --cask codex` or `npm i -g @openai/codex`, then
   `codex login`.
-- **Antigravity CLI:** Antigravity uygulamasıyla gelir (`agy`). Güncellemek için
-  `agy update`.
+- **Antigravity CLI:** included with the Antigravity app (`agy`). Run `agy update`
+  to update it.
 
-## Kurulum
+## Installation
 
 ### macOS / Linux
 
 ```bash
 git clone https://github.com/cemalguvenn/external-agent.git
 cd external-agent
-./install.sh          # kopyalar: ~/.claude/skills/external-agent
-./install.sh --link   # ya da sembolik bağ kurar: git pull ile güncellenir
+./install.sh          # copies to ~/.claude/skills/external-agent
+./install.sh --link   # or creates a symlink, updated with git pull
 ```
 
 ### Windows (PowerShell)
@@ -115,115 +114,117 @@ cd external-agent
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Komut `%USERPROFILE%\.claude\skills\external-agent` klasörüne kurar. Git Bash ve Python
-bulunamazsa uyarı verir.
+The command installs to `%USERPROFILE%\.claude\skills\external-agent`. It warns if
+Git Bash or Python is missing.
 
-### Elle kurulum
+### Manual installation
 
-`external-agent/` klasörünü `~/.claude/skills/` altına kopyalamanız yeterli. Kurduktan
-sonra Claude Code'u yeniden başlatın.
+Copy the `external-agent/` directory to `~/.claude/skills/`, then restart Claude Code.
 
-## Kullanım
+## Usage
 
-Normal konuşur gibi isteyin, skill kendiliğinden devreye girer:
+Ask in natural language; the skill activates automatically:
 
-- "plan.md'deki görevleri codex'e yaptır, her birini kontrol et, commit atma"
-- "testleri yazma işini antigravity'ye ver, incelemeyi codex yapsın"
-- "bu hatanın nedenini codex'e araştırt ama kodu değiştirmesin"
-- "ayak işlerini dış ajanlara ver, sen mimariyle uğraş"
-- "parseDimensions'ı gemini 4 argon ile yazdır, iyice kontrol et"
+- "Have Codex do the tasks in plan.md, check each one, and do not commit."
+- "Have Antigravity write the tests and Codex review them."
+- "Ask Codex to investigate this bug without changing the code."
+- "Give the routine work to external agents and focus on the architecture."
+- "Have Gemini 4 Argon write parseDimensions and check it thoroughly."
 
-**Antigravity modeli:** skill sabit bir model kullanmaz. Antigravity ilk kez
-gerektiğinde mevcut modelleri listeler (`agy models`) ve size seçtirir; Gemini
-modelleri önce gösterilir. Kalıcı bir varsayılan için `EXTERNAL_AGENT_AGY_MODEL`
-değişkenini ayarlayabilirsiniz.
+**Antigravity model:** the skill does not hard-code a model. When Antigravity is
+needed for the first time, it lists available models (`agy models`) and asks you to
+choose, showing Gemini models first. Set `EXTERNAL_AGENT_AGY_MODEL` for a persistent
+default.
 
-### Ayarlar (ortam değişkenleri)
+### Settings (environment variables)
 
-| Değişken | Varsayılan | Açıklama |
+| Variable | Default | Description |
 |---|---|---|
-| `EXTERNAL_AGENT_MODEL` | `gpt-6.1-sol` | Codex modeli |
-| `EXTERNAL_AGENT_AGY_MODEL` | (yok, kullanıcıya sorulur) | Antigravity modeli, ör. `gemini-4-argon-medium`. Codex'ten yedek olarak düşüldüğünde de bu kullanılır; ayarlı değilse `gemini-4-argon-medium` |
-| `EXTERNAL_AGENT_CODEX_MAX_PCT` | `90` | Codex'in 5 saatlik ya da haftalık kullanımı bu yüzdeye ulaşınca Codex atlanır |
-| `EXTERNAL_AGENT_RUNS` | `$TMPDIR/external-agent` | Çalıştırma kayıtlarının kök klasörü |
-| `EXTERNAL_AGENT_SNAP_ROOT` | `~/.cache/external-agent` | Antigravity'nin geçici proje kopyaları |
+| `EXTERNAL_AGENT_MODEL` | `gpt-6.1-sol` | Codex model |
+| `EXTERNAL_AGENT_AGY_MODEL` | (none; asks the user) | Antigravity model, e.g. `gemini-4-argon-medium`. Also used for fallback from Codex; if unset, fallback uses `gemini-4-argon-medium` |
+| `EXTERNAL_AGENT_CODEX_MAX_PCT` | `90` | Skip Codex when its 5-hour or weekly usage reaches this percentage |
+| `EXTERNAL_AGENT_RUNS` | `$TMPDIR/external-agent` | Root directory for run logs |
+| `EXTERNAL_AGENT_SNAP_ROOT` | `~/.cache/external-agent` | Temporary project copies for Antigravity |
 
-### Betiği doğrudan kullanmak
+### Using the script directly
 
 ```bash
 S=~/.claude/skills/external-agent/scripts/agent_run.sh
 $S models --agent agy
 $S delegate --agent agy --model gemini-4-argon-medium --review-agent codex \
-   --cd ~/proje --brief gorev.md --verify "npm test" --name gorev-1
-$S delegate --agent codex --sandbox read-only --cd ~/proje --brief soru.md   # sadece araştırma
-$S delegate --agent codex --no-fallback --cd ~/proje --brief gorev.md       # kota bitse de başka ajana geçme
+   --cd ~/project --brief task.md --verify "npm test" --name task-1
+$S delegate --agent codex --sandbox read-only --cd ~/project --brief question.md   # investigation only
+$S delegate --agent codex --no-fallback --cd ~/project --brief task.md             # do not switch agents if quota runs out
 ```
 
-## Güvenlik ve sınırlar
+## Safety and boundaries
 
-- Taşeronlar **commit atmaz**. Codex'e görev özetinde yasaklanır ve atarsa betik uyarı
-  verir; Antigravity'nin sandbox'ı `.git`'i salt okunur yapar. Kabul edilen işi
-  Claude stage'ler, ya da siz istediyseniz commit'ler.
-- Codex `workspace-write` sandbox'ında çalışır; ağ erişimi kapalıdır (`--network` ile
-  açılır).
-- Antigravity'nin ekransız modunda güvenilir bir "salt okunur" mod yok. Bu yüzden
-  inceleme ve araştırma projenin **geçici bir kopyasında** yapılır; gerçek projeye
-  dokunulmaz ve kopya iş bitince silinir.
-- Antigravity'ye giden her talimatın sonunda şemanın tamamı ve bir kapsam kuralı
-  var: proje klasörü dışına, ortam değişkenlerine ve başka araçların verilerine
-  bakmak yasak. Bu kural olmadan Gemini Flash'ın proje dışında dolaştığı görüldü.
-- Riskli işlerde (güvenlik, ödeme, veri taşıma, genel API) skill **ayrıntılı kontrol
-  moduna** geçer: Claude değişiklikleri kendisi okur ve test eder.
+- Subcontractors **do not commit**. The Codex brief forbids it and the script warns
+  if Codex does commit; Antigravity's sandbox makes `.git` read-only. Claude stages
+  accepted work, or commits it if you requested that.
+- Codex runs in a `workspace-write` sandbox with network access disabled (enable it
+  with `--network`).
+- Antigravity's headless mode has no reliable read-only mode. Reviews and
+  investigations therefore run in a **temporary copy** of the project; the real
+  project is untouched and the copy is deleted afterward.
+- Every instruction sent to Antigravity ends with the full schema and a scope rule
+  forbidding access outside the project, to environment variables, or to other
+  tools' data. Without this rule, Gemini Flash was observed exploring outside the
+  project.
+- For sensitive work (security, payments, data migration, public APIs), the skill
+  switches to **manual review mode**: Claude reads and tests the changes itself.
 
-### Bilinen kısıtlar
+### Known limitations
 
-- **macOS:** Antigravity, `~/Library/Application Support` altındaki projelerde
-  çalışamaz (sandbox orayı engelliyor).
-- **Antigravity güvenilir alanları:** proje, Antigravity'nin `trustedWorkspaces`
-  listesindeki bir klasörün altında olmalı (varsayılan olarak ev dizini).
-- **Antigravity kotası önceden görülemez:** `agy` kullanım bilgisini hiçbir yere
-  yazmıyor, kota ancak bir adım hatayla düşünce anlaşılır. Gerçek kota hata mesajı
-  henüz görülmedi; Antigravity kotası bittiğinde sonuç `LIMITED` yerine `FAILED`
-  olursa mesajın metni betikteki `limit-check` kalıplarına eklenmeli.
-- **Windows:** Windows 11 25H2'de (Git Bash, codex-cli 0.163, agy 1.4.6) Codex,
-  Antigravity, karma ve sadece okuma pipeline'ları test edildi. Ayrıca:
-  - Antigravity'nin terminal sandbox'ı Windows 11 24H2 gerektirir.
-  - Git for Windows varsayılan kurulumda PATH'e sadece `Git\cmd` ekler; `install.ps1`
-    Git Bash'i `git.exe`'nin yanında bulur, PowerShell'de `bash` olmaması sorun değil.
-  - Verify komutlarında `python3` değil `python` yazın (python.org kurulumunda `python3` yok).
-  - Codex'in Windows sandbox'ı sorun çıkarırsa WSL içinde kullanın.
+- **macOS:** Antigravity cannot work on projects under `~/Library/Application Support`
+  because its sandbox blocks that location.
+- **Antigravity trusted workspaces:** the project must be under a directory in
+  Antigravity's `trustedWorkspaces` list (the home directory is trusted by default).
+- **Antigravity quota cannot be checked in advance:** `agy` does not write usage
+  information anywhere, so exhaustion is only detected when a step fails. A real
+  quota error has not yet been observed; if exhaustion produces `FAILED` instead of
+  `LIMITED`, add the error text to the script's `limit-check` patterns.
+- **Windows:** Codex, Antigravity, mixed, and read-only pipelines were tested on
+  Windows 11 25H2 (Git Bash, codex-cli 0.163, agy 1.4.6). Also:
+  - Antigravity's terminal sandbox requires Windows 11 24H2.
+  - A default Git for Windows installation adds only `Git\cmd` to PATH;
+    `install.ps1` finds Git Bash beside `git.exe`, so `bash` need not be on the
+    PowerShell PATH.
+  - Use `python`, not `python3`, in verification commands (python.org installations
+    do not include `python3`).
+  - If Codex's Windows sandbox causes problems, use WSL.
 
-## Sorun giderme
+## Troubleshooting
 
-| Belirti | Çözüm |
+| Symptom | Solution |
 |---|---|
-| Codex çıkış kodu 137, hiç çıktı yok | Claude Code'un Bash sandbox'ı Codex'i durduruyor. Skill komutları zaten sandbox kapalı çalıştırır; elle çalıştırıyorsanız siz de kapatın. |
-| `codex: command not found` / bozuk symlink | `brew reinstall --cask codex` |
-| `agy needs a model` | Listelenen modellerden birini seçin |
-| `jetski: no output produced … permission` | agy'yi doğrudan değil betikle çağırın |
-| Çok yavaş Antigravity çalıştırması | Proje ve geçici kopya klasörü ev dizini altında olmalı |
-| `stage … LIMITED`, `fallback:` satırı | Bir ajanın kotası bitti; görevi diğer ajan devraldı. Codex, kotası %90'ı geçince (`EXTERNAL_AGENT_CODEX_MAX_PCT`) baştan atlanır. Tek ajan isteniyorsa `--no-fallback`. |
-| `FINAL LIMITED` | İki ajanın da kotası bitti; `limits:` satırında ne zaman sıfırlanacağı yazar |
+| Codex exits with code 137 and no output | Claude Code's Bash sandbox is stopping Codex. The skill already runs its commands without that sandbox; disable it if running commands manually. |
+| `codex: command not found` / broken symlink | `brew reinstall --cask codex` |
+| `agy needs a model` | Choose one of the listed models |
+| `jetski: no output produced … permission` | Call agy through the script instead of directly |
+| Antigravity runs very slowly | Keep the project and temporary copy under the home directory |
+| `stage … LIMITED`, `fallback:` line | One agent ran out of quota and the other took over. Codex is skipped from the outset when its quota reaches 90% (`EXTERNAL_AGENT_CODEX_MAX_PCT`). Use `--no-fallback` to insist on one agent. |
+| `FINAL LIMITED` | Both agents ran out of quota; the `limits:` line shows when they reset |
 
-Ayrıntılar: `external-agent/references/codex-cli.md` ve `antigravity-cli.md`.
+See `external-agent/references/codex-cli.md` and `antigravity-cli.md` for details.
 
-## Klasör yapısı
+## Directory structure
 
 ```
-external-agent/                 ← skill (bunu ~/.claude/skills/ altına kurun)
-├── SKILL.md                    ← Claude'un okuduğu talimatlar
+external-agent/                 ← skill (install under ~/.claude/skills/)
+├── SKILL.md                    ← instructions read by Claude
 ├── scripts/
 │   ├── agent_run.sh            ← delegate / task / resume / review / models
-│   ├── implementer.schema.json ← ajan rapor şeması
-│   └── review.schema.json      ← inceleme bulguları şeması
-├── references/                 ← brief şablonları, CLI notları, ayrıntılı kontrol modu
-└── evals/                      ← 3 test senaryosu (gizli testler dahil)
+│   ├── implementer.schema.json ← agent report schema
+│   └── review.schema.json      ← review findings schema
+├── references/                 ← brief templates, CLI notes, manual review mode
+└── evals/                      ← 3 test scenarios (including hidden tests)
 install.sh / install.ps1
 ```
 
-Test senaryolarını `claude plugin eval` (Claude Code v2.1.269 ve üstü) ile yeniden
-çalıştırabilirsiniz. Bunlar gerçek ve ücretli model çalıştırmalarıdır.
+You can rerun the evaluation scenarios with `claude plugin eval` (Claude Code
+v2.1.269 or later). These are real, paid model runs.
 
-## Lisans
+## License
 
-MIT. Ayrıntılar `LICENSE` dosyasında.
+MIT. See `LICENSE` for details.

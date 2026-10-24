@@ -5,6 +5,6 @@ timeout_seconds: 2400
 allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]
 ---
 
-bu repodaki plan.md'de iki görev var. ikisini de codex cli ile gpt-6.1-sol'a alt ajan gibi yaptır, her görevi bitirince kontrol et. commit atma. en sonda bana ne yapıldığını kısaca özetle.
+There are two tasks in this repository's plan.md. Have Codex CLI with gpt-6.1-sol complete both as a sub-agent, and check each task when it is done. Do not commit. At the end, briefly summarize what was done.
 
 Input files: plan.md, README.md, cargo/, tests/
