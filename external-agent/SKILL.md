@@ -1,6 +1,6 @@
 ---
 name: external-agent
-description: Delegate coding work to external agent CLIs as sub-agents - OpenAI Codex CLI (gpt-6.1-sol) and Google Antigravity CLI (agy, Gemini models). Claude writes a self-contained brief and dispatches it with one script call; the script has the agent implement, runs the verification command itself, gets an independent read-only review (optionally from the other agent family), sends real problems back to the same thread, and returns one status line. Claude only steps in on problems, keeping Claude's tokens for the heavy work. Use this whenever the user wants Codex, Antigravity, Gemini, GPT or another model to do part of the work or the simple chores - e.g. "have codex implement this", "give the chores to antigravity", "codex'e yaptır", "antigravity'ye yaptır", "gemini'ye ver", "dış ajan kullan", "taşerona ver", "ayak işlerini dış ajanlara ver", "planı codex'le uygula", "codex'e araştırt" - and when executing a multi-task plan where the user said these agents are available. Not for configuring the CLIs themselves.
+description: Delegate coding work to external agent CLIs as sub-agents - OpenAI Codex CLI (gpt-6.1-sol) and Google Antigravity CLI (agy, Gemini models). Claude writes a self-contained brief and dispatches it with one script call; the script has the agent implement, runs the verification command itself, gets an independent read-only review (optionally from the other agent family), sends real problems back to the same thread, and returns one status line. Claude only steps in on problems, keeping Claude's tokens for the heavy work. Use this whenever the user wants Codex, Antigravity, Gemini, GPT or another model to do part of the work or the simple chores - e.g. "have codex implement this", "give the chores to antigravity", "let gemini write the tests", "use an external agent", "outsource this to a subcontractor", "run the plan with codex", "have codex investigate this" - in whatever language the user writes, and when executing a multi-task plan where the user said these agents are available. Not for configuring the CLIs themselves.
 ---
 
 # External Agent: Codex and Antigravity as sub-agents
@@ -156,12 +156,12 @@ session's next tasks elsewhere.
 list them in the final report. Don't stop to check in with the user between tasks.
 Stop only for a blocker, a decision that's theirs, or a plan that turns out wrong.
 
-**"Check each task" is what the pipeline does.** When the user says "kontrol et" or
+**"Check each task" is what the pipeline does.** When the user says "check it" or
 "check each one", the independent verify and review already are that check: report
 them. Don't also re-run the suite, `cat` files or read diffs after a `DONE`. Those
 re-checks cost your tokens and found nothing extra in testing.
 
-**"Check thoroughly / iyice kontrol et"** gets one addition, not manual mode. After
+**"Check thoroughly"** gets one addition, not manual mode. After
 `DONE`, write a small probe script of adversarial inputs from the brief's edge cases
 and your own ideas (malformed, boundary, unicode, huge, wrong type), run it, and
 look only at its failures. Don't read the implementation or the agent's tests. Send

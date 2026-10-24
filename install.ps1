@@ -3,28 +3,42 @@
 param([switch]$Force)
 $ErrorActionPreference = 'Stop'
 
-$Src  = Join-Path $PSScriptRoot 'external-agent'
+# $PSScriptRoot is empty when this code is pasted or run through Invoke-Expression;
+# then the current folder has to be the repository.
+$Here = if ($PSScriptRoot) { $PSScriptRoot } else { $PWD.ProviderPath }
+$Src  = Join-Path $Here 'external-agent'
 $Dir  = if ($env:CLAUDE_SKILLS_DIR) { $env:CLAUDE_SKILLS_DIR } else { Join-Path $env:USERPROFILE '.claude\skills' }
 $Dest = Join-Path $Dir 'external-agent'
 
-if (-not (Test-Path (Join-Path $Src 'SKILL.md'))) { throw "SKILL.md not found under $Src" }
-New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-if (Test-Path $Dest) {
-  if (-not $Force) { throw "$Dest already exists (re-run with -Force to replace it)" }
-  Remove-Item -Recurse -Force $Dest
+# -LiteralPath throughout: plain -Path treats [ ] in folder names as wildcards.
+if (-not (Test-Path -LiteralPath (Join-Path $Src 'SKILL.md'))) {
+  throw "external-agent\SKILL.md not found under $Here. Run the installer from the repository folder, or by its full path: powershell -ExecutionPolicy Bypass -File <repo>\install.ps1"
 }
-Copy-Item -Recurse $Src $Dest
+New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+if (Test-Path -LiteralPath $Dest) {
+  if (-not $Force) { throw "$Dest already exists (re-run with -Force to replace it)" }
+  Remove-Item -LiteralPath $Dest -Recurse -Force
+}
+# evals\ (test cases run from the repository) is left out: Claude doesn't use it, and
+# its deep paths can pass Windows PowerShell 5.1's 260-character limit.
+try {
+  New-Item -ItemType Directory -Path $Dest | Out-Null
+  Get-ChildItem -LiteralPath $Src | Where-Object Name -ne 'evals' | Copy-Item -Destination $Dest -Recurse
+} catch {
+  Remove-Item -LiteralPath $Dest -Recurse -Force -ErrorAction SilentlyContinue
+  throw "copying to $Dest failed, nothing was installed: $($_.Exception.Message) A path over 260 characters is the usual cause: use a shorter folder, or run the installer with pwsh."
+}
 Write-Host "copied to $Dest"
 
 # The skill's script runs under bash; Claude Code on Windows uses Git Bash for its Bash tool.
 # Git for Windows' default install puts only Git\cmd on PATH, so look next to git.exe too;
 # System32\bash.exe is WSL, not Git Bash.
 $bash = $null
-if ($env:CLAUDE_CODE_GIT_BASH_PATH -and (Test-Path $env:CLAUDE_CODE_GIT_BASH_PATH)) { $bash = $env:CLAUDE_CODE_GIT_BASH_PATH }
+if ($env:CLAUDE_CODE_GIT_BASH_PATH -and (Test-Path -LiteralPath $env:CLAUDE_CODE_GIT_BASH_PATH)) { $bash = $env:CLAUDE_CODE_GIT_BASH_PATH }
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $bash -and $git) {
   $cand = Join-Path (Split-Path (Split-Path $git.Source)) 'bin\bash.exe'
-  if (Test-Path $cand) { $bash = $cand }
+  if (Test-Path -LiteralPath $cand) { $bash = $cand }
 }
 if (-not $bash) {
   $cmd = Get-Command bash -ErrorAction SilentlyContinue
