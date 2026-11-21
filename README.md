@@ -65,33 +65,41 @@ it in its report. To insist on one agent, pass `--no-fallback`.
 
 ## Task routing (2026-11, provisional)
 
-This table rests on the vendors' launch material for GPT-6.2 (Nov 17) and Gemini 4
-Neon/Hydrogen (Nov 12-18). It hasn't been measured through this pipeline yet; re-run the
-`evals/` scenarios with the new models to settle it.
+This rests on the vendors' launch material for GPT-6.2 (Nov 17) and Gemini 4
+Neon/Hydrogen (Nov 12-18), hands-on experience with them, and one image-task test per
+CLI. It hasn't been through the `evals/` scenarios yet.
 
-| Work | Default | Alternative |
-|---|---|---|
-| Chores: tests for existing code, docs, boilerplate, mechanical refactors | agy `gemini-4-hydrogen-low/medium` | codex `gpt-6.2-sol` `low` |
-| Standard implementation: a 1-3 file feature or bug fix | codex `gpt-6.2-sol` `medium`/`high` | agy `gemini-4-neon-medium` |
-| Hard work: multi-file integration, algorithms/design, tricky debugging | codex `gpt-6.2-astra` `high`/`xhigh` (Sol at `max` to save quota) | agy `gemini-4-neon-high/xhigh`, or Claude itself |
-| Read-only investigation | codex `gpt-6.2-astra` `high` | agy `gemini-4-neon-high` |
-| Per-task review | the other model family: Neon reviews Codex work, Astra reviews agy work | Sol `high` for chores |
-| Final whole-change review | Astra or Neon `high`, from the family that wrote less of the code | |
+| Work | Who |
+|---|---|
+| Standard implementation: a 1-3 file feature or bug fix, writing tests, edge-case-heavy code | **Sol or Neon, as equals**: alternated, or whichever has more quota left (`gpt-6.2-sol` `medium`/`high`, `gemini-4-neon-medium`) |
+| Hard work: multi-file integration, algorithms/design, tricky debugging | codex `gpt-6.2-astra` `high`/`xhigh` or agy `gemini-4-neon-high/xhigh`, or Claude itself |
+| Fast mechanical chores with an exact spec: renames, moving code, formatting, docs, boilerplate | agy `gemini-4-hydrogen-low/medium` |
+| Image and asset generation: icons, sprites, textures, mockups | agy `gemini-4-hydrogen-low` (Nano Banana via agy's `image-generator` subagent) or codex `gpt-6-luna` `low` (Codex's built-in image tool) |
+| Read-only investigation | codex `gpt-6.2-astra` `high` or agy `gemini-4-neon-high` |
+| Per-task review | the other family's peer: Neon reviews Sol's work, Sol reviews Neon's; Astra or Neon `high` for hard tasks |
+| Final whole-change review | Astra or Neon `high`, from the family that wrote less of the code |
 
 Why:
 
-- **Sol** is the cheap everyday model. At `max` effort it came within half a point of
-  Astra on FrontierCode 2.0 at about a fifth of the cost. But the new Sol is reported to
-  leave important facts out of code Q&A answers (a 14-point drop on SWE-Atlas-QnA), so
-  it isn't the default for investigations and reviews.
+- **Sol and Neon are peers.** Both are their vendor's fast everyday model and do standard
+  work equally well, so they form one pool. Splitting tasks between them stretches both
+  quotas, and each is the other's natural cross-family reviewer. At `max` effort Sol came
+  within half a point of Astra on FrontierCode 2.0 at about a fifth of the cost.
+- **Hydrogen is fast but not as smart.** It replaces Gemini 3.8 Flash (Google says it's
+  about 2.5x faster) and is the cheapest Gemini 4, but it reasons less than Sol or Neon.
+  So it gets only jobs where speed matters and thinking doesn't: exact-spec edits, and
+  tool-driven work like image generation, where the image model does the hard part. No
+  edge-case-heavy code, bug-catching tests, reviews or investigations.
 - **Astra** is OpenAI's strongest model for long, hard work. It costs about 4x Sol per
   token and uses up the Codex quota fast.
+- **Luna** is Codex's fast, cheap model. In an image task the model only writes the
+  prompt and saves the file.
+- The new Sol is reported to leave facts out of code Q&A answers (a 14-point drop on
+  SWE-Atlas-QnA), so investigations go to Astra or Neon, and Sol reviews at effort `high`.
 - Both GPT-6.2 models regressed on OpenAI's *Blocker Deception* test: they're more
   likely to work around an obstacle (say, a file the brief names is missing) without
   mentioning it. The brief template now asks for that to be reported, and the verify and
   review steps catch what slips through.
-- **Hydrogen** replaces Gemini 3.8 Flash: Google says it's about 2.5x faster and the
-  cheapest Gemini 4.
 - **Neon** is the newest and strongest Gemini 4 most accounts get. Its coding claims are
   good but not yet independently verified. **Carbon** needs Google AI Ultra; route hard
   work to it only if `agy models` lists it. **Argon** still works, and the measurements
@@ -102,6 +110,16 @@ Why:
   `ultra`.
 - "The other family" means the model family, not the CLI: agy also offers Claude and
   GPT-OSS models, and a review by those isn't a second pair of eyes.
+
+### Image tasks
+
+Both CLIs generate images inside a normal task. agy hands the request to its built-in
+`image-generator` subagent, which checks its own result up to three times. Codex uses its
+built-in image tool. The brief gives the subject, style, background, size, format and the
+exact path in the project. The run uses `--no-review`, since a code reviewer can't judge a
+picture, and a `--verify` that checks the file exists in the right format. Then Claude
+looks at the image itself, and if it misses the brief, sends the change back to the same
+thread. In a test, both made a usable 1024-1254 px cat icon in 37-45 seconds.
 
 ## Keeping itself current: `doctor`
 
@@ -209,11 +227,12 @@ Ask as you normally would, in any language; the skill kicks in on its own:
 - "have codex investigate the cause of this bug, but it must not change the code"
 - "hand the chores to external agents, you focus on the architecture"
 - "have gemini 4 neon write parseDimensions, and check it thoroughly"
-- "give the hard part to astra in codex, and let hydrogen write the tests"
+- "give the hard part to astra in codex, split the rest between sol and neon"
+- "have hydrogen make the game icons with nano banana"
 
 **Antigravity model:** the skill doesn't hard-code a model. The first time Antigravity is
 needed, it lists the available models (`agy models`) and lets you pick, Gemini models
-first. Recommended: Neon for implementation and reviews, Hydrogen for chores. For a standing default, set `EXTERNAL_AGENT_AGY_MODEL`.
+first. Recommended: Neon for implementation, tests and reviews; Hydrogen for fast mechanical chores and images. For a standing default, set `EXTERNAL_AGENT_AGY_MODEL`.
 
 ### Settings (environment variables)
 

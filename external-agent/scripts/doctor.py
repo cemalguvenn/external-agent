@@ -236,6 +236,13 @@ def main(argv):
             else:
                 state = "up to date"
             print(f"doctor {agent}: cli {installed or '?'} {state}")
+            if agent == "codex":  # image tasks need Codex's built-in image tool
+                rc, out, _ = run(["codex", "features", "list"], timeout=30)
+                img = re.search(r"^image_generation\s+\S+\s+(true|false)", out, re.M)
+                if rc == 0 and img and img.group(1) == "false":
+                    infos.append("Codex's image tool is off (`image_generation` in `codex features list`): "
+                                 "send image tasks to agy, or enable it under [features] in ~/.codex/config.toml")
+                    print("doctor codex: image tool off")
 
             if agent == "codex" and do_probe and installed and codex_cache_version() not in ("", installed):
                 # The cache lists what the CLI that wrote it could run. After an update it is

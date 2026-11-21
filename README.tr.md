@@ -64,33 +64,42 @@ raporunda bunu belirtir. Tek bir ajanda ısrar ediyorsanız `--no-fallback`.
 
 ## Görev dağılımı (2026-11, geçici)
 
-Bu tablo GPT-6.2 (17 Kasım) ve Gemini 4 Neon/Hydrogen (12-18 Kasım) için üreticilerin
-yayımladığı bilgilere dayanıyor; bu pipeline'da henüz ölçülmedi. Kesinleştirmek için
-`evals/` senaryolarını yeni modellerle yeniden çalıştırın.
+Bu yönlendirme GPT-6.2 (17 Kasım) ve Gemini 4 Neon/Hydrogen (12-18 Kasım) için
+üreticilerin yayımladığı bilgilere, modellerle edinilen deneyime ve her CLI'da bir görsel
+üretim testine dayanıyor. `evals/` senaryolarından henüz geçmedi.
 
-| İş | Varsayılan | Alternatif |
-|---|---|---|
-| Ayak işleri: mevcut koda test, doküman, boilerplate, mekanik refactor | agy `gemini-4-hydrogen-low/medium` | codex `gpt-6.2-sol` `low` |
-| Standart geliştirme: 1-3 dosyalık özellik / hata düzeltme | codex `gpt-6.2-sol` `medium`/`high` | agy `gemini-4-neon-medium` |
-| Zor iş: çok dosyalı entegrasyon, algoritma/tasarım, çetrefilli hata ayıklama | codex `gpt-6.2-astra` `high`/`xhigh` (kota için Sol `max`) | agy `gemini-4-neon-high/xhigh` ya da Claude'un kendisi |
-| Salt okunur araştırma | codex `gpt-6.2-astra` `high` | agy `gemini-4-neon-high` |
-| Görev başına inceleme | diğer model ailesi: Codex işini Neon, agy işini Astra inceler | ayak işlerinde Sol `high` |
-| Son toplu inceleme | daha az kod yazan aileden Astra ya da Neon `high` | |
+| İş | Kim |
+|---|---|
+| Standart geliştirme: 1-3 dosyalık özellik / hata düzeltme, test yazma, kenar durumu yoğun kod | **Sol ya da Neon, eşit güçte**: dönüşümlü ya da kotası fazla olana (`gpt-6.2-sol` `medium`/`high`, `gemini-4-neon-medium`) |
+| Zor iş: çok dosyalı entegrasyon, algoritma/tasarım, çetrefilli hata ayıklama | codex `gpt-6.2-astra` `high`/`xhigh` ya da agy `gemini-4-neon-high/xhigh`, ya da Claude'un kendisi |
+| Spesifikasyonu net, hızlı mekanik ayak işleri: yeniden adlandırma, kod taşıma, biçimlendirme, doküman, boilerplate | agy `gemini-4-hydrogen-low/medium` |
+| Görsel ve asset üretimi: ikon, sprite, doku, mockup | agy `gemini-4-hydrogen-low` (agy'nin `image-generator` alt ajanı üzerinden Nano Banana) ya da codex `gpt-6-luna` `low` (Codex'in yerleşik görsel aracı) |
+| Salt okunur araştırma | codex `gpt-6.2-astra` `high` ya da agy `gemini-4-neon-high` |
+| Görev başına inceleme | diğer ailenin eşi: Sol'ün işini Neon, Neon'un işini Sol inceler; zor işlerde Astra ya da Neon `high` |
+| Son toplu inceleme | daha az kod yazan aileden Astra ya da Neon `high` |
 
 Gerekçeler:
 
-- **Sol** ucuz gündelik model; `max` effort'ta FrontierCode 2.0'da Astra'ya yarım puan
-  yaklaştı, maliyeti yaklaşık beşte bir. Ama yeni Sol'ün kod soru-cevabında önemli
-  bilgileri atladığı raporlandı (SWE-Atlas-QnA'da 14 puan düşüş). Bu yüzden araştırma
-  ve incelemede varsayılan değil.
+- **Sol ve Neon eşit.** İkisi de kendi firmasının hızlı gündelik modeli ve standart işi
+  aynı başarıyla yapıyor; tek bir havuz gibi kullanılıyorlar. İşi aralarında bölmek iki
+  kotayı da uzatıyor, her biri diğerinin doğal farklı-aile incelemecisi oluyor. Sol `max`
+  effort'ta FrontierCode 2.0'da Astra'ya yarım puan yaklaştı, maliyeti yaklaşık beşte bir.
+- **Hydrogen hızlı ama o kadar akıllı değil.** Gemini 3.8 Flash'ın yerini alıyor (Google'a
+  göre ~2.5 kat hızlı) ve en ucuz Gemini 4, ama Sol ve Neon kadar akıl yürütmüyor. Bu
+  yüzden sadece hızın önemli, düşünmenin önemsiz olduğu işleri alıyor: net tarifli
+  düzenlemeler ve görsel üretimi gibi işin zor kısmını aracın yaptığı görevler. Kenar
+  durumu yoğun kod, hata yakalaması gereken testler, inceleme ve araştırma verilmiyor.
 - **Astra** uzun ve zor işler için en güçlü OpenAI modeli; token başına Sol'ün ~4 katı,
   Codex kotasını hızlı tüketir.
+- **Luna** Codex'in hızlı ve ucuz modeli. Görsel görevinde model sadece prompt'u yazıp
+  dosyayı kaydediyor.
+- Yeni Sol'ün kod soru-cevabında önemli bilgileri atladığı raporlandı (SWE-Atlas-QnA'da
+  14 puan düşüş). Bu yüzden araştırmalar Astra ya da Neon'a gidiyor, Sol `high` effort'la
+  inceliyor.
 - İki GPT-6.2 modeli de OpenAI'nin *Blocker Deception* testinde geriledi: bir engeli
   (ör. brief'teki dosyanın olmaması) söylemeden etrafından dolaşmaya daha yatkınlar.
   Brief şablonu artık bunun raporlanmasını istiyor; doğrulama ve inceleme adımları
   kaçanı yakalıyor.
-- **Hydrogen** Gemini 3.8 Flash'ın yerini alıyor: Google'a göre ~2.5 kat daha hızlı ve
-  en ucuz Gemini 4.
 - **Neon** çoğu hesapta erişilebilen en yeni ve en güçlü Gemini 4; kodlama iddiaları
   iyi ama henüz bağımsız olarak doğrulanmadı. **Carbon** Google AI Ultra gerektiriyor;
   ancak `agy models` listeliyorsa zor işlere verin. **Argon** hâlâ çalışıyor ve aşağıdaki ölçümler onunla yapıldı.
@@ -100,6 +109,17 @@ Gerekçeler:
   test edilmedi; betik `ultra`'yı reddediyor.
 - "Diğer aile" CLI değil model ailesi demek: agy Claude ve GPT-OSS modellerini de
   sunuyor, bunlarla inceleme farklı bir göz sayılmaz.
+
+### Görsel görevleri
+
+İki CLI da görseli normal bir görevin içinde üretiyor. agy isteği yerleşik
+`image-generator` alt ajanına veriyor; o da sonucu en fazla üç denemeyle kendisi kontrol
+ediyor. Codex yerleşik görsel aracını kullanıyor. Brief konuyu, stili, arka planı,
+boyutu, formatı ve projedeki tam yolu veriyor. Görev `--no-review` ile çalışıyor (kod
+incelemecisi bir resmi değerlendiremez), `--verify` ise dosyanın doğru formatta var
+olduğunu kontrol ediyor. Sonra Claude görsele kendisi bakıyor; brief'e uymuyorsa
+değişikliği aynı oturuma geri gönderiyor. Testte ikisi de 37-45 saniyede kullanılabilir
+1024-1254 px bir kedi ikonu üretti.
 
 ## Kendini güncel tutma: `doctor`
 
@@ -209,12 +229,13 @@ Normal konuşur gibi isteyin, skill kendiliğinden devreye girer:
 - "bu hatanın nedenini codex'e araştırt ama kodu değiştirmesin"
 - "ayak işlerini dış ajanlara ver, sen mimariyle uğraş"
 - "parseDimensions'ı gemini 4 neon ile yazdır, iyice kontrol et"
-- "zor kısmı codex'te astra'ya ver, testleri hydrogen yazsın"
+- "zor kısmı codex'te astra'ya ver, kalanı sol ile neon arasında böl"
+- "oyun ikonlarını hydrogen nano banana ile yapsın"
 
 **Antigravity modeli:** skill sabit bir model kullanmaz. Antigravity ilk kez
 gerektiğinde mevcut modelleri listeler (`agy models`) ve size seçtirir; Gemini
-modelleri önce gösterilir. Öneri: geliştirme ve inceleme için Neon, ayak işleri için
-Hydrogen. Kalıcı bir varsayılan için `EXTERNAL_AGENT_AGY_MODEL`
+modelleri önce gösterilir. Öneri: geliştirme, test ve inceleme için Neon; hızlı mekanik
+ayak işleri ve görseller için Hydrogen. Kalıcı bir varsayılan için `EXTERNAL_AGENT_AGY_MODEL`
 değişkenini ayarlayabilirsiniz.
 
 ### Ayarlar (ortam değişkenleri)

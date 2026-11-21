@@ -8,20 +8,20 @@
 # When doctor reports a model as "new", the routing in SKILL.md is out of date: research
 # it, update SKILL.md section 1, README.md and this file, then re-run doctor.
 # Last reviewed: 2026-11-22.
-codex	gpt-6.2-sol	recommended	default; standard implementation, cheap chores
+codex	gpt-6.2-sol	recommended	default; Neon's equal: standard work, tests, reviews
 codex	gpt-6.2-astra	recommended	hard work, investigations, reviews
 codex	gpt-6.1-sol	fallback	measured with this skill (2026-10); works on older CLIs
 codex	gpt-6.1-terra	known	visual understanding and computer use
 codex	gpt-6-astra	known	previous generation
 codex	gpt-6-sol	known	legacy
-codex	gpt-6-luna	known	fast, for easy tasks
+codex	gpt-6-luna	recommended	image tasks: the model writes the prompt, the image tool draws
 codex	gpt-5.6-sol	known	legacy
 codex	gpt-5.6-terra	known	legacy
 codex	gpt-5.6-luna	known	legacy
 codex	gpt-reserve	known	hidden in the picker
 codex	codex-auto-review	excluded	Codex's internal approval reviewer, not a code reviewer
-agy	gemini-4-neon	recommended	standard and hard work, reviews, investigations
-agy	gemini-4-hydrogen	recommended	chores; replaces Gemini 3.8 Flash
+agy	gemini-4-neon	recommended	Sol's equal: standard work, tests, reviews; hard work, investigations
+agy	gemini-4-hydrogen	recommended	fast mechanical chores and image generation; replaces Gemini 3.8 Flash
 agy	gemini-4-argon	fallback	measured with this skill (2026-10)
 agy	gemini-4-carbon	known	needs Google AI Ultra; route hard work to it only if listed
 agy	gemini-3.8-flash	known	measured 2-4x slower than Argon
