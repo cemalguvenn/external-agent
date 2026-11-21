@@ -21,14 +21,17 @@
 #   agent_run.sh review --cd DIR (--uncommitted | --base BRANCH | --commit SHA) [--brief FILE]
 #                       [--agent A] [--model M] ...
 #   agent_run.sh models --agent codex|agy          # list the models the account can use
+#   agent_run.sh doctor [--agent codex|agy|both] [--no-probe] [--reprobe]
+#     once per session: CLI versions vs latest, offered models vs models.tsv, and a tiny
+#     probe run per recommended model (cached per CLI version) -> DOCTOR OK | ATTENTION
 #
 # Everything an agent emits stays in the run directory; stdout gets only a short summary.
 #
-# Env: EXTERNAL_AGENT_MODEL (codex default model, default gpt-6.1-sol),
+# Env: EXTERNAL_AGENT_MODEL (codex default model, default gpt-6.2-sol),
 #      EXTERNAL_AGENT_AGY_MODEL (agy default model; no built-in default — ask the user),
 #      EXTERNAL_AGENT_RUNS (run root), EXTERNAL_AGENT_CODEX_MAX_PCT (skip Codex when its
 #      5-hour or weekly usage is at or above this, default 90). A fallback to agy with no
-#      agy model chosen uses EXTERNAL_AGENT_AGY_MODEL, else gemini-4-argon-medium.
+#      agy model chosen uses EXTERNAL_AGENT_AGY_MODEL, else gemini-4-neon-medium.
 # Both CLIs must be called with Claude Code's Bash sandbox disabled: inside it Codex is
 # killed (exit 137) and agy cannot reach its own sandbox and credentials.
 
@@ -53,9 +56,10 @@ done
 # cannot encode much of what agents write; bash reads it as UTF-8 anyway.
 py_run() { PYTHONIOENCODING=utf-8 "$PY_BIN" "$@"; }
 
-[ $# -ge 1 ] || die "usage: agent_run.sh delegate|task|resume|review|models [options]"
+[ $# -ge 1 ] || die "usage: agent_run.sh delegate|task|resume|review|models|doctor [options]"
 MODE="$1"; shift
-case "$MODE" in delegate|task|resume|review|models) ;; *) die "unknown mode '$MODE'";; esac
+case "$MODE" in delegate|task|resume|review|models|doctor) ;; *) die "unknown mode '$MODE'";; esac
+if [ "$MODE" = "doctor" ]; then py_run "$SCRIPT_DIR/doctor.py" "$@"; exit $?; fi
 
 CD="" BRIEF="" NAME="" THREAD="" RUN_DIR="" VERIFY=""
 AGENT="codex" MODEL="" REVIEW_AGENT="" REVIEW_MODEL=""
@@ -100,7 +104,10 @@ need_cli() {  # agent
 
 default_model() {  # agent -> prints model or nothing
   case "$1" in
-    codex) printf '%s' "${EXTERNAL_AGENT_MODEL:-gpt-6.1-sol}";;
+    codex) if [ -n "${EXTERNAL_AGENT_MODEL:-}" ]; then printf '%s' "$EXTERNAL_AGENT_MODEL"
+           else  # an older CLI can't run the newest default: fall back (see models.tsv)
+             printf '%s' "$(py_run "$SCRIPT_DIR/doctor.py" resolve codex gpt-6.2-sol)"
+           fi;;
     agy)   printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-}";;
   esac
 }
@@ -149,6 +156,8 @@ case "$MODE" in
   resume) [ -f "$BRIEF" ] || die "--brief FILE is required"; [ -n "$THREAD" ] || die "--thread ID is required";;
   review) [ ${#REVIEW_TARGET[@]} -gt 0 ] || die "review needs --uncommitted, --base BRANCH or --commit SHA";;
 esac
+# Codex also offers `ultra` ("automatic task delegation": it starts its own sub-agents).
+# Left out on purpose: untested with the schema, resume and one-writer-per-tree rules.
 for e in "$EFFORT" "$REVIEW_EFFORT"; do
   case "$e" in low|medium|high|xhigh|max) ;; *) die "effort must be low|medium|high|xhigh|max";; esac
 done
@@ -401,7 +410,7 @@ agy_prompt_args() {  # prompt_file -> PROMPT_ARGS
 
 agy_common() {  # model effort
   COMMON=(--model "$1" --print-timeout 30m --output-format json)
-  # Model ids like gemini-3.8-flash-medium already carry their effort level.
+  # Model ids like gemini-4-neon-medium already carry their effort level.
   case "$1" in *-low|*-medium|*-high|*-xhigh|*-max) ;; *) COMMON+=(--effort "$2");; esac
 }
 
@@ -586,7 +595,7 @@ codex_quota_ok() {  # reads Codex's last recorded usage once per run
 role_model() {  # agent -> the model chosen for it in this run, else its fallback default
   if [ "$1" = "$AGENT0" ]; then printf '%s' "$MODEL0"
   elif [ "$1" = "$REVIEW_AGENT0" ]; then printf '%s' "$REVIEW_MODEL0"
-  elif [ "$1" = agy ]; then printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-gemini-4-argon-medium}"
+  elif [ "$1" = agy ]; then printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-gemini-4-neon-medium}"
   else default_model "$1"; fi
 }
 switch_role() {  # implement|review -> gives the role to the other agent; 1 if none is left

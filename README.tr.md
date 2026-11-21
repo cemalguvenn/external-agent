@@ -5,8 +5,8 @@
 **Claude Code için taşeron skill'i.** Claude işi planlar, basit ve orta zorluktaki
 görevleri dış kodlama ajanlarına yaptırır:
 
-- **OpenAI Codex CLI** (varsayılan model `gpt-6.1-sol`)
-- **Google Antigravity CLI** (`agy`, Gemini modelleri)
+- **OpenAI Codex CLI** (varsayılan model `gpt-6.2-sol`, zor işler için `gpt-6.2-astra`)
+- **Google Antigravity CLI** (`agy`, Gemini modelleri: önerilen Gemini 4 Neon, ayak işleri için Hydrogen)
 
 Ajanın yaptığı iş otomatik olarak doğrulanır ve bağımsız bir incelemeden geçer. Claude
 sadece sorun çıktığında devreye girer. Böylece Claude'un token'ları zor işlere
@@ -59,10 +59,78 @@ Bir ajanın kullanım limiti dolarsa iş yarıda kalmaz, rolü diğer ajan devra
   `DONE_WITH_CONCERNS` olur.
 
 Antigravity'ye düşüldüğünde model seçilmemişse `EXTERNAL_AGENT_AGY_MODEL`, o da yoksa
-`gemini-4-argon-medium` kullanılır. Devralma `fallback:` satırında görünür, Claude da
+`gemini-4-neon-medium` kullanılır. Devralma `fallback:` satırında görünür, Claude da
 raporunda bunu belirtir. Tek bir ajanda ısrar ediyorsanız `--no-fallback`.
 
-## Test sonuçları
+## Görev dağılımı (2026-11, geçici)
+
+Bu tablo GPT-6.2 (17 Kasım) ve Gemini 4 Neon/Hydrogen (12-18 Kasım) için üreticilerin
+yayımladığı bilgilere dayanıyor; bu pipeline'da henüz ölçülmedi. Kesinleştirmek için
+`evals/` senaryolarını yeni modellerle yeniden çalıştırın.
+
+| İş | Varsayılan | Alternatif |
+|---|---|---|
+| Ayak işleri: mevcut koda test, doküman, boilerplate, mekanik refactor | agy `gemini-4-hydrogen-low/medium` | codex `gpt-6.2-sol` `low` |
+| Standart geliştirme: 1-3 dosyalık özellik / hata düzeltme | codex `gpt-6.2-sol` `medium`/`high` | agy `gemini-4-neon-medium` |
+| Zor iş: çok dosyalı entegrasyon, algoritma/tasarım, çetrefilli hata ayıklama | codex `gpt-6.2-astra` `high`/`xhigh` (kota için Sol `max`) | agy `gemini-4-neon-high/xhigh` ya da Claude'un kendisi |
+| Salt okunur araştırma | codex `gpt-6.2-astra` `high` | agy `gemini-4-neon-high` |
+| Görev başına inceleme | diğer model ailesi: Codex işini Neon, agy işini Astra inceler | ayak işlerinde Sol `high` |
+| Son toplu inceleme | daha az kod yazan aileden Astra ya da Neon `high` | |
+
+Gerekçeler:
+
+- **Sol** ucuz gündelik model; `max` effort'ta FrontierCode 2.0'da Astra'ya yarım puan
+  yaklaştı, maliyeti yaklaşık beşte bir. Ama yeni Sol'ün kod soru-cevabında önemli
+  bilgileri atladığı raporlandı (SWE-Atlas-QnA'da 14 puan düşüş). Bu yüzden araştırma
+  ve incelemede varsayılan değil.
+- **Astra** uzun ve zor işler için en güçlü OpenAI modeli; token başına Sol'ün ~4 katı,
+  Codex kotasını hızlı tüketir.
+- İki GPT-6.2 modeli de OpenAI'nin *Blocker Deception* testinde geriledi: bir engeli
+  (ör. brief'teki dosyanın olmaması) söylemeden etrafından dolaşmaya daha yatkınlar.
+  Brief şablonu artık bunun raporlanmasını istiyor; doğrulama ve inceleme adımları
+  kaçanı yakalıyor.
+- **Hydrogen** Gemini 3.8 Flash'ın yerini alıyor: Google'a göre ~2.5 kat daha hızlı ve
+  en ucuz Gemini 4.
+- **Neon** çoğu hesapta erişilebilen en yeni ve en güçlü Gemini 4; kodlama iddiaları
+  iyi ama henüz bağımsız olarak doğrulanmadı. **Carbon** Google AI Ultra gerektiriyor;
+  ancak `agy models` listeliyorsa zor işlere verin. **Argon** hâlâ çalışıyor ve aşağıdaki ölçümler onunla yapıldı.
+- Pipeline dışında bırakılanlar: Codex'in `ultra` effort'u (kendi alt ajanlarını
+  başlatıyor) ve `gemini-pro-orchestrator-*` modelleri (oturum içinde model
+  değiştiriyor). İkisi de şema, resume ve "çalışma ağacı başına tek yazar" kurallarıyla
+  test edilmedi; betik `ultra`'yı reddediyor.
+- "Diğer aile" CLI değil model ailesi demek: agy Claude ve GPT-OSS modellerini de
+  sunuyor, bunlarla inceleme farklı bir göz sayılmaz.
+
+## Kendini güncel tutma: `doctor`
+
+Claude her oturumun başında bir kez `agent_run.sh doctor` çalıştırır:
+
+1. **CLI sürümü:** kurulu Codex ve Antigravity sürümü en yeni sürümle karşılaştırılır
+   (Codex için npm/GitHub, agy için `agy changelog`). Codex eskiyse Claude bunu bir kez
+   söyler; önerilen modeller eski sürümde çalışmıyorsa `codex update` çalıştırmanızı
+   ister ve o zamana kadar `models.tsv`'deki yedek modeli kullanır. Kendisi güncellemez. agy arka planda kendini
+   günceller.
+2. **Model listesi:** CLI'ların sunduğu modeller `scripts/models.tsv` ile karşılaştırılır.
+   Skill'in tanımadığı yeni bir model çıktıysa ya da önerilen bir model kalktıysa
+   "yönlendirme eskimiş olabilir" uyarısı gelir. Claude işine devam eder, raporunda
+   bunu söyler ve skill'i yenilemeyi önerir (yeni modelleri araştırıp §1 tablosunu,
+   `models.tsv`'yi ve README'yi güncellemek).
+3. **Deneme çalıştırması:** önerilen her modele "OK yaz" denir. Bir model listede
+   görünse de eski bir CLI onu reddedebilir (0.163.0 GPT-6.2'yi reddetti). Başarılı
+   denemeler CLI sürümü başına 14 gün önbellekte tutulur; kota yalnızca güncellemeden
+   sonra harcanır. Başarısız olursa Claude `models.tsv`'deki yedek modele geçer.
+
+```bash
+S=~/.claude/skills/external-agent/scripts/agent_run.sh
+$S doctor                 # tam kontrol
+$S doctor --no-probe      # sadece ücretsiz kontroller
+$S doctor --agent codex --reprobe   # önbelleği yok say, yeniden dene
+```
+
+Çıktı `DOCTOR OK` ya da `DOCTOR ATTENTION` ve ardından ne yapılacağını söyleyen
+`next:` satırlarıdır.
+
+## Test sonuçları (2026-10, önceki modeller)
 
 Aynı 3 senaryo kullanıldı: iki görevlik bir Python planı, kenar durumu yoğun bir JS
 ayrıştırıcı ve kodu değiştirmeden hata araştırma. Değerlendirme, ajanların görmediği
@@ -140,19 +208,21 @@ Normal konuşur gibi isteyin, skill kendiliğinden devreye girer:
 - "testleri yazma işini antigravity'ye ver, incelemeyi codex yapsın"
 - "bu hatanın nedenini codex'e araştırt ama kodu değiştirmesin"
 - "ayak işlerini dış ajanlara ver, sen mimariyle uğraş"
-- "parseDimensions'ı gemini 4 argon ile yazdır, iyice kontrol et"
+- "parseDimensions'ı gemini 4 neon ile yazdır, iyice kontrol et"
+- "zor kısmı codex'te astra'ya ver, testleri hydrogen yazsın"
 
 **Antigravity modeli:** skill sabit bir model kullanmaz. Antigravity ilk kez
 gerektiğinde mevcut modelleri listeler (`agy models`) ve size seçtirir; Gemini
-modelleri önce gösterilir. Kalıcı bir varsayılan için `EXTERNAL_AGENT_AGY_MODEL`
+modelleri önce gösterilir. Öneri: geliştirme ve inceleme için Neon, ayak işleri için
+Hydrogen. Kalıcı bir varsayılan için `EXTERNAL_AGENT_AGY_MODEL`
 değişkenini ayarlayabilirsiniz.
 
 ### Ayarlar (ortam değişkenleri)
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
-| `EXTERNAL_AGENT_MODEL` | `gpt-6.1-sol` | Codex modeli |
-| `EXTERNAL_AGENT_AGY_MODEL` | (yok, kullanıcıya sorulur) | Antigravity modeli, ör. `gemini-4-argon-medium`. Codex'ten yedek olarak düşüldüğünde de bu kullanılır; ayarlı değilse `gemini-4-argon-medium` |
+| `EXTERNAL_AGENT_MODEL` | `gpt-6.2-sol` | Codex modeli (zor işlerde Claude `--model gpt-6.2-astra` geçer) |
+| `EXTERNAL_AGENT_AGY_MODEL` | (yok, kullanıcıya sorulur) | Antigravity modeli, ör. `gemini-4-neon-medium`. Codex'ten yedek olarak düşüldüğünde de bu kullanılır; ayarlı değilse `gemini-4-neon-medium` |
 | `EXTERNAL_AGENT_CODEX_MAX_PCT` | `90` | Codex'in 5 saatlik ya da haftalık kullanımı bu yüzdeye ulaşınca Codex atlanır |
 | `EXTERNAL_AGENT_RUNS` | `$TMPDIR/external-agent` | Çalıştırma kayıtlarının kök klasörü |
 | `EXTERNAL_AGENT_SNAP_ROOT` | `~/.cache/external-agent` | Antigravity'nin geçici proje kopyaları |
@@ -162,7 +232,8 @@ değişkenini ayarlayabilirsiniz.
 ```bash
 S=~/.claude/skills/external-agent/scripts/agent_run.sh
 $S models --agent agy
-$S delegate --agent agy --model gemini-4-argon-medium --review-agent codex \
+$S delegate --agent agy --model gemini-4-hydrogen-medium \
+   --review-agent codex --review-model gpt-6.2-astra \
    --cd ~/proje --brief gorev.md --verify "npm test" --name gorev-1
 $S delegate --agent codex --sandbox read-only --cd ~/proje --brief soru.md   # sadece araştırma
 $S delegate --agent codex --no-fallback --cd ~/proje --brief gorev.md       # kota bitse de başka ajana geçme
@@ -208,6 +279,7 @@ $S delegate --agent codex --no-fallback --cd ~/proje --brief gorev.md       # ko
 |---|---|
 | Codex çıkış kodu 137, hiç çıktı yok | Claude Code'un Bash sandbox'ı Codex'i durduruyor. Skill komutları zaten sandbox kapalı çalıştırır; elle çalıştırıyorsanız siz de kapatın. |
 | `codex: command not found` / bozuk symlink | `brew reinstall --cask codex` |
+| `FAILED`, "model is not supported when using Codex with a ChatGPT account" | Codex CLI modelden eski (0.163.0 GPT-6.2'yi tanımıyor): `codex update`. O zamana kadar `EXTERNAL_AGENT_MODEL=gpt-6.1-sol` |
 | `agy needs a model` | Listelenen modellerden birini seçin |
 | `jetski: no output produced … permission` | agy'yi doğrudan değil betikle çağırın |
 | Çok yavaş Antigravity çalıştırması | Proje ve geçici kopya klasörü ev dizini altında olmalı |
@@ -223,7 +295,9 @@ Ayrıntılar: `external-agent/references/codex-cli.md` ve `antigravity-cli.md`.
 external-agent/                 ← skill (bunu ~/.claude/skills/ altına kurun)
 ├── SKILL.md                    ← Claude'un okuduğu talimatlar
 ├── scripts/
-│   ├── agent_run.sh            ← delegate / task / resume / review / models
+│   ├── agent_run.sh            ← delegate / task / resume / review / models / doctor
+│   ├── doctor.py               ← CLI sürümü, model listesi ve deneme çalıştırması kontrolü
+│   ├── models.tsv              ← skill'in tanıdığı modeller ve rolleri (doctor bununla karşılaştırır)
 │   ├── implementer.schema.json ← ajan rapor şeması
 │   └── review.schema.json      ← inceleme bulguları şeması
 ├── references/                 ← brief şablonları, CLI notları, ayrıntılı kontrol modu

@@ -1,4 +1,4 @@
-# Antigravity CLI (`agy`) notes (verified against agy 1.4.5 on macOS, 1.4.6 on Windows 11)
+# Antigravity CLI (`agy`) notes (verified against agy 1.4.5 on macOS, 1.4.6 on Windows 11; flags rechecked on 1.5.13)
 
 ## How the script drives it
 

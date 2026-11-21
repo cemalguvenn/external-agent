@@ -49,6 +49,9 @@ command runs.
 - Read the relevant code before editing; match the surrounding style.
 - If the requirements are ambiguous or conflict with the code, do not guess: report
   NEEDS_CONTEXT with specific questions. Bad work is worse than no work.
+- If anything this brief names or assumes is missing or broken (a file, function,
+  command, dependency or test that isn't there or doesn't work), say so in `concerns`,
+  or report BLOCKED. Never work around it silently.
 - Run the verification commands yourself and report their real output.
 - Before reporting, re-read your diff: anything missing from the requirements? anything
   added that wasn't asked for? Fix it first.

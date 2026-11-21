@@ -1,6 +1,6 @@
 ---
 name: external-agent
-description: Delegate coding work to external agent CLIs as sub-agents - OpenAI Codex CLI (gpt-6.1-sol) and Google Antigravity CLI (agy, Gemini models). Claude writes a self-contained brief and dispatches it with one script call; the script has the agent implement, runs the verification command itself, gets an independent read-only review (optionally from the other agent family), sends real problems back to the same thread, and returns one status line. Claude only steps in on problems, keeping Claude's tokens for the heavy work. Use this whenever the user wants Codex, Antigravity, Gemini, GPT or another model to do part of the work or the simple chores - e.g. "have codex implement this", "give the chores to antigravity", "let gemini write the tests", "use an external agent", "outsource this to a subcontractor", "run the plan with codex", "have codex investigate this" - in whatever language the user writes, and when executing a multi-task plan where the user said these agents are available. Not for configuring the CLIs themselves.
+description: Delegate coding work to external agent CLIs as sub-agents - OpenAI Codex CLI (GPT-6.2 Sol / Astra) and Google Antigravity CLI (agy, Gemini models). Claude writes a self-contained brief and dispatches it with one script call; the script has the agent implement, runs the verification command itself, gets an independent read-only review (optionally from the other agent family), sends real problems back to the same thread, and returns one status line. Claude only steps in on problems, keeping Claude's tokens for the heavy work. Use this whenever the user wants Codex, Antigravity, Gemini, GPT or another model to do part of the work or the simple chores - e.g. "have codex implement this", "give the chores to antigravity", "let gemini write the tests", "use an external agent", "outsource this to a subcontractor", "run the plan with codex", "have codex investigate this" - in whatever language the user writes, and when executing a multi-task plan where the user said these agents are available. Not for configuring the CLIs themselves.
 ---
 
 # External Agent: Codex and Antigravity as sub-agents
@@ -29,42 +29,104 @@ troubleshooting: `references/codex-cli.md`, `references/antigravity-cli.md`.
 
 | | Codex (`--agent codex`) | Antigravity (`--agent agy`) |
 |---|---|---|
-| Models | `gpt-6.1-sol` default (`agent_run.sh models --agent codex`) | **user chooses** (see below); prefer Gemini 4 Argon |
-| Good for | Standard and hard implementation, debugging, investigations | Chores and standard implementation: tests, docs, boilerplate, refactors, small features; reviews; investigations |
+| Models | `gpt-6.2-sol` default; `gpt-6.2-astra` for hard work (`agent_run.sh models --agent codex`) | **user chooses** (see below); recommend Gemini 4 Neon, plus Gemini 4 Hydrogen for chores |
+| Good for | Standard implementation (Sol), hard implementation, debugging, investigations and reviews (Astra) | Chores (Hydrogen): tests, docs, boilerplate, mechanical refactors. Standard and hard implementation, reviews and investigations (Neon) |
 | Isolation | Workspace-write sandbox; it *can* commit (the brief forbids it, the script warns) | Terminal sandbox, `.git` read-only, so it can't commit; reviews and investigations run in a disposable copy |
 | Limits | Network off unless `--network` | Project must not be under `~/Library/Application Support`; needs the folder trusted in Antigravity (it is when under `$HOME` by default) |
 
-**Routing.** In side-by-side tests on the same three tasks (a two-task plan, an
-edge-case-heavy parser, a read-only bug hunt), Codex/gpt-6.1-sol and
+**Routing (provisional, 2026-11).** The table below rests on the vendors' launch
+material for GPT-6.2 (Nov 17) and Gemini 4 Neon/Hydrogen (Nov 12-18), not on runs
+through this pipeline. Re-run `evals/` before treating it as settled.
+
+| Work | Default | Alternative |
+|---|---|---|
+| Chores: tests for existing code, docs, boilerplate, renames, mechanical refactors | agy `gemini-4-hydrogen-low/medium` | codex `gpt-6.2-sol` `low` |
+| Standard implementation: feature or bug fix, 1-3 files | codex `gpt-6.2-sol` `medium`/`high` | agy `gemini-4-neon-medium` |
+| Hard: multi-file integration, algorithmic or design-heavy work, tricky debugging | codex `gpt-6.2-astra` `high`/`xhigh` (or Sol at `max` to save quota) | agy `gemini-4-neon-high/xhigh`, or keep it yourself |
+| Read-only investigation | codex `gpt-6.2-astra` `high` | agy `gemini-4-neon-high` |
+| Per-task review | the other family (`--review-agent`, `--review-model`): Neon for Codex work, Astra for agy work | Sol `high` for chores |
+| Final whole-change review | Astra or Neon `high`, from the family that implemented less | |
+
+Why: Sol is the cheap everyday model, and at `max` effort it came within half a point
+of Astra on FrontierCode 2.0 at about a fifth of the cost. Astra is the frontier model
+for long, hard changes. But the new Sol is reported to **leave important facts out of
+code Q&A answers** (a 14-point drop on SWE-Atlas-QnA), so don't use it by default for
+investigations or reviews, where the answer is the whole output. Hydrogen replaces
+Gemini 3.8 Flash: Google says it is about 2.5x faster than Flash and the cheapest
+Gemini 4. Neon is the newest and strongest Gemini 4 model most accounts get. It sits
+between Hydrogen and Carbon, and its coding claims are good but not yet independently
+verified. Carbon needs Google AI Ultra: route hard work to it only if `agy models` lists it. Argon still works and is the agy model this skill was measured with (below), but
+Google has replaced it with Neon in the Gemini app.
+
+Both GPT-6.2 models also regressed on OpenAI's *Blocker Deception* test: they more
+often fail to mention an obstacle (say, a file the brief names is missing) and work
+around it quietly. The implementer brief asks for that to be reported, and the
+script's verify and review steps catch what slips through. Read a `DONE_WITH_CONCERNS`
+from Codex carefully.
+
+Spread work across both subcontractors to stretch both quotas. Astra costs about four
+times as much as Sol per token, so it uses up the Codex quota faster. Keep it for the
+hard tasks. **Review with the other model family.** That means the model, not the CLI:
+agy also offers Claude and GPT-OSS models, and a Claude model reviewing for you, or a
+GPT model checking Codex, isn't a second family. If the user names an agent or model,
+use it.
+
+**Measured results (2026-10, previous models).** On the same three tasks (a two-task
+plan, an edge-case-heavy parser, a read-only bug hunt), Codex/gpt-6.1-sol and
 agy/Gemini 4 Argon reached the same quality: every hidden test passed, and both
-handled the float and NaN traps. Argon took similar agent time with far fewer
-tokens. Gemini 3.8 Flash was also correct, but 2-4x slower and used *more* tokens, so
-it is no cheaper in practice. Spread work across both subcontractors to stretch
-both quotas. Send hard algorithmic or design-heavy work to Codex at `high`/`xhigh`,
-or keep it yourself. When both CLIs are available, **review with the other family**
-(`--review-agent`): a reviewer from a different model family has different blind
-spots. If the user names an agent or model, use it.
+handled the float and NaN traps. Argon took similar agent time with far fewer tokens.
+Gemini 3.8 Flash was also correct, but 2-4x slower and used *more* tokens. These
+models are all still available if the new ones misbehave.
 
 **Choosing the Antigravity model.** Antigravity offers several model families. Its
 non-Gemini models may be withdrawn, so don't hard-code one. The first time agy is
 needed in a session, and the user hasn't named a model, run
-`agent_run.sh models --agent agy`. Show the user the list and ask which model to use
-for implementation and which (if any) for reviews, Gemini options first. Recommend
-Argon, and mention Flash's measured slowness if they lean that way. Reuse that answer for
-the rest of the session. Without a model the script stops with exit 2 and prints the
-list, so it never picks one silently. `EXTERNAL_AGENT_AGY_MODEL` sets a standing
-default if the user wants one.
+`agent_run.sh models --agent agy`. Show the user the list and ask which models to use
+(Gemini options first). Recommend Neon (`gemini-4-neon-medium`, `-high` for hard work)
+for implementation and reviews, and Hydrogen (`gemini-4-hydrogen-medium`) for chores.
+Mention that Argon is the one already measured here. Reuse that answer for the rest of
+the session. Without a model the script stops with exit 2 and prints the list, so it
+never picks one silently. `EXTERNAL_AGENT_AGY_MODEL` sets a standing default if the
+user wants one.
+
+**Not used in the pipeline:** the `gemini-pro-orchestrator-*` models (they switch
+models inside one session) and Codex's `ultra` effort ("automatic task delegation":
+Codex starts its own sub-agents). Both delegate internally, which hasn't been tested
+with the schema, resume and one-writer rules, so the script rejects `ultra`.
+`gpt-6.1-terra` is built for visual understanding and computer use. It's an option for
+a task that hinges on reading screenshots or images, otherwise use Sol.
 
 ## 2. Preflight (once per session)
 
-1. Run `codex --version` and/or `agy --version` **with the Bash sandbox disabled**.
-   Inside Claude Code's sandbox Codex gets killed (exit 137, empty output) and agy
-   can't reach its credentials, which looks like a broken install but isn't. Every
-   `agent_run.sh` call needs the sandbox disabled too. If a CLI is missing, tell the
-   user (Codex: `brew reinstall --cask codex` or `npm i -g @openai/codex`; agy:
-   `agy update` or reinstall Antigravity). On Windows the script runs under Git Bash,
-   the shell Claude Code's Bash tool uses there; it needs Python 3 as `python3` or
-   `python`.
+1. Run `agent_run.sh doctor` **with the Bash sandbox disabled** (every `agent_run.sh`
+   call needs that: inside Claude Code's sandbox Codex gets killed, exit 137 with no
+   output, and agy can't reach its credentials, which looks like a broken install but
+   isn't). Doctor checks each CLI's version against the latest release, compares the
+   models each CLI offers with `scripts/models.tsv`, and makes a tiny "reply OK" probe
+   run with each recommended model. A passed probe is cached per CLI version for 14
+   days, so it costs quota only after an update. `--no-probe` skips the probes, and
+   `--agent codex|agy` checks one CLI. `DOCTOR OK` means go ahead; an `info:` line
+   under it (say, a Codex update is available) is worth one mention to the user. On
+   `DOCTOR ATTENTION`, follow its `next:` lines:
+   - **CLI too old for a recommended model** (the model is missing or its probe was
+     rejected): tell the user and ask them to run `codex update` (or whatever
+     installed it). Don't update a CLI yourself. Until then the script's Codex default
+     falls back to the `fallback` model in `models.tsv` by itself (a `note:` says so),
+     and wherever you would name a missing model, pass `--model`/`--review-model` with
+     the one doctor names. agy updates itself in the background.
+   - **Probe failed:** use the fallback model it names, or the other agent, and say so
+     in your report.
+   - **Routing may be stale** (a new model nobody has classified, or a recommended one
+     that's gone): carry on with the task using what works, and tell the user in your
+     report. Offer to refresh the skill: research the new models from the vendors'
+     pages, update §1's table, `scripts/models.tsv` and `README.md`, then re-run
+     `doctor` and, if the user agrees to the cost, `evals/`. Don't edit the skill
+     mid-task without their go-ahead.
+
+   If a CLI is missing, tell the user (Codex: `brew reinstall --cask codex` or
+   `npm i -g @openai/codex`; agy: reinstall Antigravity). On Windows the script runs
+   under Git Bash, the shell Claude Code's Bash tool uses there; it needs Python 3 as
+   `python3` or `python`.
 2. Check `git status --short` and the branch. If there are uncommitted changes that
    aren't yours, ask the user before stashing or committing them. Follow the host's
    branch conventions.
@@ -97,20 +159,24 @@ not `python3`: a python.org install has no `python3`, only the Microsoft Store s
 | `medium` (default) | Typical feature or bug fix, 1-3 files |
 | `high` | Multi-file integration, tricky edge cases, debugging, investigations |
 | `xhigh` | Hard algorithmic/design work, or a retry after BLOCKED |
+| `max` | The hardest tasks, or a retry after BLOCKED at `xhigh`. Slowest and most expensive. Sol's near-Astra coding results were measured at `max` |
 
-agy model ids that end in `-low/-medium/-high` already carry their effort level, and
-`--effort` is ignored for them.
+`ultra` is rejected on purpose (see §1). agy model ids that end in
+`-low/-medium/-high/-xhigh` already carry their effort level, and `--effort` is ignored
+for them.
 
 ## 4. Delegate
 
 ```bash
-scripts/agent_run.sh delegate --agent agy --model <chosen> --review-agent codex \
+scripts/agent_run.sh delegate --agent agy --model <chosen> \
+  --review-agent codex --review-model gpt-6.2-astra \
   --cd <repo> --brief <brief.md> --verify "<test command>" \
   --name task-1 --effort medium --run-dir <run-root>/task-1
 ```
 
 (`--agent codex` is the default; `--review-agent` defaults to the implementer's agent,
-and `--review-model` to that agent's default or chosen model.)
+and `--review-model` to that agent's default or chosen model. For Codex that default
+is Sol, so pass `--review-model gpt-6.2-astra` when Codex reviews, per §1.)
 
 Run it with `run_in_background`. It takes 1-10 minutes, and you're notified when it
 exits, so don't poll. Prepare the next brief meanwhile, but never start a second
@@ -122,7 +188,7 @@ shows it on the `agents:` line (`usage: codex 5h=40% week=12%`). At 90% or more
 error is marked `LIMITED`. Either way the role (implement or review) moves to the other
 agent for the rest of the run: an implementer that takes over is told to check the
 partial work in the tree, and gets the fix list if it was mid-fix. A fallback to agy
-with no agy model chosen uses `EXTERNAL_AGENT_AGY_MODEL`, else `gemini-4-argon-medium`.
+with no agy model chosen uses `EXTERNAL_AGENT_AGY_MODEL`, else `gemini-4-neon-medium`.
 agy reports no usage figures, so its limits only show when a step fails. Pass
 `--no-fallback` when the user insists on one agent.
 

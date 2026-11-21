@@ -55,6 +55,7 @@
 | Exit 137, no output at all | Claude Code's Bash sandbox killed Codex | Re-run with the sandbox disabled |
 | `command not found: codex` / broken symlink in `/opt/homebrew/bin/codex` | Binary removed (cleanup tools such as Mole can do this) | Ask the user to run `brew reinstall --cask codex` |
 | `status=NO_REPORT` | Codex crashed, hit a limit, or was interrupted | Read `stderr.log` and the tail of `events.jsonl` in the run dir |
+| `FINAL FAILED`, events show "Model metadata for `gpt-6.2-…` not found" and "model is not supported when using Codex with a ChatGPT account" | The CLI is older than the model (seen with 0.163.0 and GPT-6.2, 2026-11-22) | User runs `codex update` (or `brew upgrade --cask codex` / `npm i -g @openai/codex`). Until then pass `--model gpt-6.1-sol`. `models_cache.json` lags: it still listed GPT-6.2 (fetched by a newer client) until the old CLI's first run refreshed it without them. `agent_run.sh doctor` probes each recommended model to catch this |
 | Auth / 401 / "log in" errors | Codex session expired | User runs `codex login` themselves |
 | `stage … LIMITED codex: usage limit` / `note: codex skipped` | ChatGPT plan limits | Automatic: agy takes over. If `FINAL LIMITED`, do it yourself or wait for the reset time on the `limits:` line; tell the user |
 | Build tool can't download | Sandbox has no network | `--network`, or install deps yourself before dispatch |
