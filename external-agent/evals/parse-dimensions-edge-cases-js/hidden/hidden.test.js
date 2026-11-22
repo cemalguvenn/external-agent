@@ -1,4 +1,4 @@
-// Hidden acceptance tests. Copy into the repo's test/ dir and run `node --test test/`.
+// Hidden acceptance tests. Copy into the repo's test/ dir and run `node --test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseDimensions as p } from "../src/parseDims.js";

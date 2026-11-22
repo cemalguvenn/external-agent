@@ -62,11 +62,13 @@ Antigravity'ye düşüldüğünde model seçilmemişse `EXTERNAL_AGENT_AGY_MODEL
 `gemini-4-neon-medium` kullanılır. Devralma `fallback:` satırında görünür, Claude da
 raporunda bunu belirtir. Tek bir ajanda ısrar ediyorsanız `--no-fallback`.
 
-## Görev dağılımı (2026-11, geçici)
+## Görev dağılımı (2026-11)
 
 Bu yönlendirme GPT-6.2 (17 Kasım) ve Gemini 4 Neon/Hydrogen (12-18 Kasım) için
-üreticilerin yayımladığı bilgilere, modellerle edinilen deneyime ve her CLI'da bir görsel
-üretim testine dayanıyor. `evals/` senaryolarından henüz geçmedi.
+üreticilerin yayımladığı bilgilere, modellerle edinilen deneyime, her CLI'da bir görsel
+üretim testine ve aşağıdaki 2026-11-22 eval çalıştırmasına dayanıyor; orada Sol ve Neon
+eşit çıktı. Hydrogen ve Luna o çalıştırmada
+yoktu.
 
 | İş | Kim |
 |---|---|
@@ -149,6 +151,40 @@ $S doctor --agent codex --reprobe   # önbelleği yok say, yeniden dene
 
 Çıktı `DOCTOR OK` ya da `DOCTOR ATTENTION` ve ardından ne yapılacağını söyleyen
 `next:` satırlarıdır.
+
+## Test sonuçları (2026-11-22, güncel modeller)
+
+Aynı 3 senaryo, bu kez standart işin iki eşi için ayrı ayrı çalıştırıldı: Codex kolu
+(Sol yazar) ve Neon kolu (Antigravity, Gemini 4 Neon yazar). Değerlendirme gizli
+testlerle yapıldı. Denetleyici Claude Opus 5.5 (Claude Code 2.1.330, ekransız). Her
+senaryo bir kez çalıştırıldı.
+
+| Kol | Plan (2 görev) | Ayrıştırıcı | Araştırma | Seçilen incelemeci |
+|---|---|---|---|---|
+| **Codex: gpt-6.2-sol** (araştırmada Astra) | **14/14**, 82 sn + 65 sn | **22/22**, 146 sn | iki hata da bulundu, 80 sn | Astra |
+| **Antigravity: gemini-4-neon** (araştırmada Neon `high`) | **14/14**, 84 sn + 63 sn | **22/22**, 154 sn | iki hata da bulundu, 176 sn | Astra (plan), Sol (ayrıştırıcı) |
+
+- **Sol ve Neon eşit çıktı:** tüm gizli testler geçti, ajan süreleri birkaç saniye
+  içinde, her görev ilk seferde `DONE` ile bitti, düzeltme turuna gerek kalmadı.
+- **Neon daha az ajan token'ı kullandı:** planda 127k + 101k girdi, Sol'de 247k + 223k;
+  ayrıştırıcıda 247k'ya karşı 362k. Codex her turda sistem talimatını yeniden okuyor.
+- **İkisi de gerçek bir engeli saklamadı, raporladı.** İlk denemede ayrıştırıcı
+  senaryosunun `npm test` betiği (`node --test test/`) Node 22.23.5'te hiçbir testi
+  yüklemeden çöktü. Codex `NEEDS_CONTEXT`, Neon `DONE_WITH_CONCERNS`/`BLOCKED` ile durdu;
+  ikisi de kapsam dışındaki bir dosyayı gizlice değiştirmedi. Senaryo düzeltildi
+  (`node --test`) ve iki ayrıştırıcı senaryosu yeniden çalıştırıldı; tablo yeniden
+  çalıştırmaları gösteriyor.
+- Claude tarafının maliyeti senaryo başına 0,35-0,57 $. Plan ve Ayrıştırıcı sütunlarındaki süreler ajanın kendi süresi (`elapsed_seconds`); Araştırma sütunu ise senaryonun toplam süresi.
+- Hydrogen ve Luna (ayak işleri ve görseller) bu çalıştırmada yoktu.
+
+**Yeniden çalıştırma:** `claude plugin eval` artık bu skill'i test edemiyor. Her
+senaryoyu ağı kapalı ve sahte HOME'lu bir işletim sistemi sandbox'ında çalıştırıyor;
+Codex ve agy hiç başlayamıyor (Claude işi kendisi yapıyor, LLM hakemi yine de geçer
+diyebiliyor). Bunun yerine `external-agent/evals/run-headless.sh [senaryo ...]`
+kullanın: her senaryoyu ekransız Claude Code ile (`claude -p`, giriş yapılmış)
+`~/.cache/external-agent/` altındaki bir klasörde çalıştırır, sonra `evals/grade.py` ile
+puanlar (gizli testler, commit'ler, pipeline özetleri). `*-neon` senaryoları Antigravity
+kolu. Bunlar gerçek ve ücretli model çalıştırmalarıdır.
 
 ## Test sonuçları (2026-10, önceki modeller)
 
@@ -322,12 +358,12 @@ external-agent/                 ← skill (bunu ~/.claude/skills/ altına kurun)
 │   ├── implementer.schema.json ← ajan rapor şeması
 │   └── review.schema.json      ← inceleme bulguları şeması
 ├── references/                 ← brief şablonları, CLI notları, ayrıntılı kontrol modu
-└── evals/                      ← 3 test senaryosu (gizli testler dahil)
+└── evals/                      ← 3 senaryo x 2 kol (gizli testler dahil), run-headless.sh, grade.py
 install.sh / install.ps1
 ```
 
-Test senaryolarını `claude plugin eval` (Claude Code v2.1.269 ve üstü) ile yeniden
-çalıştırabilirsiniz. Bunlar gerçek ve ücretli model çalıştırmalarıdır.
+Test senaryolarını yeniden çalıştırmak için 2026-11 test sonuçlarının altındaki
+"Yeniden çalıştırma" bölümüne bakın.
 
 ## Lisans
 

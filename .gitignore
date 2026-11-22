@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 *.skill
 external-agent-workspace/
+external-agent/evals/results/

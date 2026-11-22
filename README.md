@@ -63,11 +63,12 @@ A fallback to Antigravity with no model chosen uses `EXTERNAL_AGENT_AGY_MODEL`, 
 `gemini-4-neon-medium`. Every takeover shows on a `fallback:` line, and Claude mentions
 it in its report. To insist on one agent, pass `--no-fallback`.
 
-## Task routing (2026-11, provisional)
+## Task routing (2026-11)
 
 This rests on the vendors' launch material for GPT-6.2 (Nov 17) and Gemini 4
 Neon/Hydrogen (Nov 12-18), hands-on experience with them, and one image-task test per
-CLI. It hasn't been through the `evals/` scenarios yet.
+CLI, and the 2026-11-22 eval run below, where Sol and Neon came out equal. Hydrogen
+and Luna weren't in that run.
 
 | Work | Who |
 |---|---|
@@ -149,6 +150,38 @@ $S doctor --agent codex --reprobe   # ignore the cache and probe again
 
 The output is `DOCTOR OK` or `DOCTOR ATTENTION`, followed by `next:` lines saying what to
 do.
+
+## Test results (2026-11-22, current models)
+
+The same 3 scenarios, now run for both standard-work peers: a Codex arm (Sol implements)
+and a Neon arm (Antigravity, Gemini 4 Neon implements). Graded with the hidden tests.
+The controller was Claude Opus 5.5 (Claude Code 2.1.330, headless). One run per case.
+
+| Arm | Plan (2 tasks) | Parser | Investigation | Reviewer chosen |
+|---|---|---|---|---|
+| **Codex: gpt-6.2-sol** (Astra for the investigation) | **14/14**, 82 s + 65 s | **22/22**, 146 s | both bugs found, 80 s | Astra |
+| **Antigravity: gemini-4-neon** (Neon `high` for the investigation) | **14/14**, 84 s + 63 s | **22/22**, 154 s | both bugs found, 176 s | Astra (plan), Sol (parser) |
+
+- **Sol and Neon came out equal:** every hidden test passed, agent times were within a few
+  seconds, every task ended `DONE` on the first pass, and no fix rounds were needed.
+- **Neon used fewer agent tokens:** 127k + 101k input on the plan against Sol's 247k + 223k,
+  and 247k against 362k on the parser. Codex re-reads its system prompt every turn.
+- **Both reported a real obstacle instead of hiding it.** In the first attempt, the parser
+  scenario's `npm test` script (`node --test test/`) crashed on Node 22.23.5 before
+  loading any test. Codex stopped with `NEEDS_CONTEXT` and Neon with
+  `DONE_WITH_CONCERNS`/`BLOCKED`; neither quietly edited a file outside its scope. The
+  scenario was fixed (`node --test`) and both parser cases were re-run; the table shows
+  the re-runs.
+- Claude's side cost $0.35-0.57 per case. Times in the Plan and Parser columns are the agent's own (`elapsed_seconds`); the Investigation column is the whole case's wall time.
+- Hydrogen and Luna (chores and images) weren't part of this run.
+
+**Re-running:** `claude plugin eval` can't test this skill any more. It runs each case in
+an OS sandbox with no network and a stand-in HOME, so Codex and agy never start (Claude
+then does the work itself, and an LLM judge may still pass it). Use
+`external-agent/evals/run-headless.sh [case ...]`, which runs each case with headless
+Claude Code (`claude -p`, logged in) in a folder under `~/.cache/external-agent/` and then
+grades it with `evals/grade.py` (hidden tests, commits, pipeline summaries). The `*-neon`
+cases are the Antigravity arm. These are real, paid model runs.
 
 ## Test results (2026-10, previous models)
 
@@ -320,12 +353,11 @@ external-agent/                 ← the skill (install this under ~/.claude/skil
 │   ├── implementer.schema.json ← agent report schema
 │   └── review.schema.json      ← review findings schema
 ├── references/                 ← brief templates, CLI notes, manual mode
-└── evals/                      ← 3 test scenarios (hidden tests included)
+└── evals/                      ← 3 test scenarios x 2 arms (hidden tests included), run-headless.sh, grade.py
 install.sh / install.ps1
 ```
 
-You can rerun the test scenarios with `claude plugin eval` (Claude Code v2.1.269 or
-later). These are real, paid model runs.
+To rerun the test scenarios, see "Re-running" under the 2026-11 test results.
 
 ## License
 

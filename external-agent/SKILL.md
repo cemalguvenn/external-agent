@@ -34,9 +34,12 @@ troubleshooting: `references/codex-cli.md`, `references/antigravity-cli.md`.
 | Isolation | Workspace-write sandbox; it *can* commit (the brief forbids it, the script warns) | Terminal sandbox, `.git` read-only, so it can't commit; reviews and investigations run in a disposable copy |
 | Limits | Network off unless `--network` | Project must not be under `~/Library/Application Support`; needs the folder trusted in Antigravity (it is when under `$HOME` by default) |
 
-**Routing (provisional, 2026-11).** This rests on the vendors' launch material for
-GPT-6.2 (Nov 17) and Gemini 4 Neon/Hydrogen (Nov 12-18), the user's experience with
-them, and one image-task test per CLI. It hasn't been through `evals/` yet.
+**Routing (2026-11).** This rests on the vendors' launch material for GPT-6.2 (Nov 17)
+and Gemini 4 Neon/Hydrogen (Nov 12-18), the user's experience with them, one
+image-task test per CLI, and the `evals/` run of 2026-11-22: Sol and Neon each passed
+every hidden test in all three scenarios with similar agent time, which backs treating
+them as peers. One run per case, so not yet a large sample. Hydrogen and Luna were not
+in those evals.
 
 | Work | Who | Effort |
 |---|---|---|
@@ -133,7 +136,9 @@ a task that hinges on reading screenshots or images, otherwise use Sol.
      that's gone): carry on with the task using what works, and tell the user in your
      report. Offer to refresh the skill: research the new models from the vendors'
      pages, update §1's table, `scripts/models.tsv` and `README.md`, then re-run
-     `doctor` and, if the user agrees to the cost, `evals/`. Don't edit the skill
+     `doctor` and, if the user agrees to the cost, `evals/run-headless.sh` (not
+     `claude plugin eval`: its sandbox has no network, so Codex and agy never run and
+     the case can still "pass"). Don't edit the skill
      mid-task without their go-ahead.
 
    If a CLI is missing, tell the user (Codex: `brew reinstall --cask codex` or
