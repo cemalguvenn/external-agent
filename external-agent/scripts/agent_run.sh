@@ -504,18 +504,48 @@ inline_change() {  # review target... -> the change itself, for reviewers that c
 # turn with no answer as soon as the model tries any command. So agy's read-only work
 # (reviews, investigations) runs with full permissions in a throwaway copy of the
 # project. It can run code there, and nothing it does reaches the real tree.
+# Under $HOME, not $TMPDIR: agy's terminal sandbox restricts commands outside its
+# trusted workspaces, and a copy in /var/folders made a trivial run take minutes.
+SNAP_ROOT="${EXTERNAL_AGENT_SNAP_ROOT:-$HOME/.cache/external-agent}"
+older_than() {  # path minutes -> 0 if the path was last modified more than N minutes ago
+  [ -n "$(find "$1" -maxdepth 0 -mmin +"$2" 2>/dev/null)" ]
+}
+# Each copy has a sibling <copy>.pid naming the run that owns it. Copies whose run is gone
+# (killed, crashed, machine restarted) are removed here, so they never pile up on disk.
+prune_snapshots() {
+  [ -d "$SNAP_ROOT" ] || return 0
+  local d f pid
+  for d in "$SNAP_ROOT"/external-agent-snap.??????; do
+    [ -d "$d" ] || continue
+    pid="$(cat "$d.pid" 2>/dev/null)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      older_than "$d" 1440 || continue  # owner alive: keep, unless a day old (PID reuse)
+    elif [ -z "$pid" ]; then
+      older_than "$d" 60 || continue    # no owner file: older version, or being created now
+    fi
+    rm -rf "$d" "$d.pid"
+  done
+  for f in "$SNAP_ROOT"/external-agent-snap.??????.pid; do
+    [ -f "$f" ] && [ ! -d "${f%.pid}" ] && rm -f "$f"
+  done
+  return 0
+}
 make_snapshot() {  # -> SNAP
-  # Under $HOME, not $TMPDIR: agy's terminal sandbox restricts commands outside its
-  # trusted workspaces, and a copy in /var/folders made a trivial run take minutes.
-  local root="${EXTERNAL_AGENT_SNAP_ROOT:-$HOME/.cache/external-agent}"
-  mkdir -p "$root" || die "cannot create $root"
-  SNAP="$(mktemp -d "$root/external-agent-snap.XXXXXX")" || die "cannot create snapshot dir"
+  prune_snapshots
+  mkdir -p "$SNAP_ROOT" || die "cannot create $SNAP_ROOT"
+  SNAP="$(mktemp -d "$SNAP_ROOT/external-agent-snap.XXXXXX")" || die "cannot create snapshot dir"
+  echo "$$" > "$SNAP.pid"
   py snapshot "$CD" "$SNAP" || die "cannot copy the project into $SNAP"
 }
 drop_snapshot() {
-  case "${SNAP:-}" in */external-agent-snap.??????) rm -rf "$SNAP";; esac
+  case "${SNAP:-}" in */external-agent-snap.??????) rm -rf "$SNAP" "$SNAP.pid";; esac
   SNAP=""
 }
+# A run that is stopped (Ctrl-C, kill, or an error exit) still removes its copy.
+SNAP=""
+trap 'drop_snapshot' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 backend_task() {  # agent model stage_dir brief effort
   local agent="$1" model="$2" dir="$3" brief="$4" effort="$5"

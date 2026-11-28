@@ -32,7 +32,8 @@ Claude, or as a 3rd fallback). Never use `agy`'s bundled Claude models — alway
 - **Read-only isolation:** reviews and read-only investigations run in a disposable copy
   under `~/.cache/external-agent/external-agent-snap.XXXXXX` (`.git`, `node_modules`,
   etc. excluded) so Claude can run tests or reproducers safely without modifying the real
-  working tree.
+  working tree. The copy is removed when the run ends or is stopped; copies left by
+  crashed runs are pruned automatically (see `antigravity-cli.md`).
 - **Quota:** `claude` does not expose pre-run quota percentages to the script. If a run
   fails with a usage/rate limit error (`usage limit`, `hit your limit`, `rate limit`,
   `429`, `overloaded`), `limit-check` marks it `LIMITED` and `switch_role` moves the role

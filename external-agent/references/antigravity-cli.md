@@ -27,7 +27,10 @@
   isn't available on every account ("not available for this account").
 - That's why work that must not touch the tree runs in a copy:
   `~/.cache/external-agent/external-agent-snap.XXXXXX`. `.git`, `node_modules`, `.venv`,
-  `target`, `dist`, `build` and `.next` are excluded, and the copy is deleted afterwards.
+  `target`, `dist`, `build` and `.next` are excluded, and the copy is deleted afterwards,
+  also when the run is stopped (Ctrl-C, `kill`, error exit). A copy left by a run that
+  was killed outright or crashed is removed by the next run that makes a copy (its
+  `<copy>.pid` owner is gone; copies with no owner file are removed after an hour).
   `EXTERNAL_AGENT_SNAP_ROOT` moves it. It must be inside a trusted workspace:
   a copy under `/var/folders` made a trivial investigation take ~8 minutes and
   3M cache tokens.
