@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 $Here = if ($PSScriptRoot) { $PSScriptRoot } else { $PWD.ProviderPath }
 $Src  = Join-Path $Here 'external-agent'
 $ClaudeDir = if ($env:CLAUDE_SKILLS_DIR) { $env:CLAUDE_SKILLS_DIR } else { Join-Path $env:USERPROFILE '.claude\skills' }
-$AgyDir    = if ($env:AGY_SKILLS_DIR) { $env:AGY_SKILLS_DIR } else { Join-Path $env:USERPROFILE '.gemini\antigravity\skills' }
+$AgyDir    = if ($env:AGY_SKILLS_DIR) { $env:AGY_SKILLS_DIR } else { Join-Path $env:USERPROFILE '.gemini\config\skills' }
 
 # -LiteralPath throughout: plain -Path treats [ ] in folder names as wildcards.
 if (-not (Test-Path -LiteralPath (Join-Path $Src 'SKILL.md'))) {
@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $Src 'SKILL.md'))) {
 }
 
 if (-not $Target) {
-  if ((Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.gemini\antigravity')) -or (Get-Command agy -ErrorAction SilentlyContinue)) {
+  if ((Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.gemini\config')) -or (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.gemini\antigravity')) -or (Get-Command agy -ErrorAction SilentlyContinue)) {
     $Target = 'both'
   } else {
     $Target = 'claude'

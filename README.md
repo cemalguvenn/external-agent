@@ -188,7 +188,7 @@ Details and per-CLI troubleshooting: `external-agent/references/claude-cli.md`,
 ## Folder structure
 
 ```
-external-agent/                 ← skill (installed to ~/.claude/skills/ and/or ~/.gemini/antigravity/skills/)
+external-agent/                 ← skill (installed to ~/.claude/skills/ and/or ~/.gemini/config/skills/)
 ├── SKILL.md                    ← instructions read by the host (Claude Code / Antigravity)
 ├── scripts/
 │   ├── agent_run.sh            ← delegate / task / resume / review / models / doctor

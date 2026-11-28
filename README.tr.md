@@ -187,7 +187,7 @@ Ayrıntılar ve sorun giderme: `external-agent/references/claude-cli.md`, `codex
 ## Klasör yapısı
 
 ```
-external-agent/                 ← skill (~/.claude/skills/ ve/veya ~/.gemini/antigravity/skills/ altına kurulur)
+external-agent/                 ← skill (~/.claude/skills/ ve/veya ~/.gemini/config/skills/ altına kurulur)
 ├── SKILL.md                    ← host'un (Claude Code / Antigravity) okuduğu talimatlar
 ├── scripts/
 │   ├── agent_run.sh            ← delegate / task / resume / review / models / doctor

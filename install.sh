@@ -8,7 +8,7 @@ set -eu
 
 SRC="$(cd "$(dirname "$0")" && pwd)/external-agent"
 CLAUDE_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-AGY_DIR="${AGY_SKILLS_DIR:-$HOME/.gemini/antigravity/skills}"
+AGY_DIR="${AGY_SKILLS_DIR:-$HOME/.gemini/config/skills}"
 LINK=0 FORCE=0 TARGET=""
 
 while [ $# -gt 0 ]; do
@@ -23,7 +23,7 @@ done
 [ -f "$SRC/SKILL.md" ] || { echo "error: $SRC/SKILL.md not found" >&2; exit 1; }
 
 if [ -z "$TARGET" ]; then
-  if [ -d "$HOME/.gemini/antigravity" ] || command -v agy >/dev/null 2>&1; then
+  if [ -d "$HOME/.gemini/config" ] || [ -d "$HOME/.gemini/antigravity" ] || command -v agy >/dev/null 2>&1; then
     TARGET="both"
   else
     TARGET="claude"
