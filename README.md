@@ -2,362 +2,204 @@
 
 **English** · [Türkçe](README.tr.md)
 
-**A subcontractor skill for Claude Code.** Claude plans the work and hands simple and
-medium-difficulty tasks to external coding agents:
+**Collective 3-AI orchestration skill for Claude Code and Antigravity.**
+Run from either **Claude Code (Opus)** or **Antigravity (Gemini 4 Neon)** as host, and
+distribute work across all three major agent CLIs based on each model's strengths:
 
-- **OpenAI Codex CLI** (default model `gpt-6.2-sol`, `gpt-6.2-astra` for hard work)
-- **Google Antigravity CLI** (`agy`, Gemini models: Gemini 4 Neon recommended, Hydrogen for chores)
+- **Anthropic Claude Code CLI (`claude`):** Co-lead flagship **Opus** (`opus`), fast economical helper **Sonnet** (`sonnet`)
+- **Google Antigravity CLI (`agy`):** Co-lead flagship **Gemini 4 Neon**, fast/economical helper & web search & Nano Banana images **Hydrogen**, critical reviewer **Carbon**
+- **OpenAI Codex CLI (`codex`):** Workhorse **GPT-6.2 Sol**, critical reviewer & hard debugging **GPT-6.2 Astra**, image tool **Luna**
 
-The agent's work is verified automatically and goes through an independent review.
-Claude steps in only when something goes wrong. That keeps Claude's tokens for the hard
-parts (design, tricky debugging, decisions) while the subcontractors do the chores.
-
-> Inspired by Superpowers' `subagent-driven-development` approach. The difference: the
-> sub-agents are separate CLIs, not Claude.
+Every delegated task is verified independently and reviewed by a **different model family**.
+Opus and Neon carry core coding, code-generated visuals, standard reviews, and final
+approvals while stretching usage quotas cleanly across all three platforms.
 
 ---
 
 ## How it works
 
-For each task Claude writes a self-contained brief and sends it with one command:
+For each task, the host writes a self-contained brief and dispatches it with one command:
 
 ```
-Claude ──brief──▶ agent_run.sh delegate
-                    │
-                    ├─ 0. quota     : reads Codex's last recorded usage (Codex is skipped at 90% or more)
-                    ├─ 1. implement : Codex / Antigravity writes the code (it cannot commit)
-                    ├─ 2. verify    : the SCRIPT runs the test command (the agent saying "passed" doesn't count)
-                    ├─ 3. review    : a fresh, read-only session reviews the change against the brief
-                    │                 (optionally from the other model family)
-                    ├─ 4. fix       : critical/important findings go back to the same thread (up to 2 rounds)
-                    │   (if an agent runs out of quota, the other agent takes over its role)
-                    └─ FINAL DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | NEEDS_ATTENTION | LIMITED | FAILED
-Claude ◀── one status line + changed files + open notes
+Host (Opus / Neon) ──brief──▶ agent_run.sh delegate
+                                │
+                                ├─ 0. quota     : checks Codex usage (skips Codex at 90%+)
+                                ├─ 1. implement : claude / agy / codex writes the code (never commits)
+                                ├─ 2. verify    : the SCRIPT runs the test command independently
+                                ├─ 3. review    : fresh, read-only session from another model family
+                                ├─ 4. fix       : critical/important findings go back to the same thread (up to 2 rounds)
+                                │   (if an agent runs out of quota, another available external CLI takes over)
+                                └─ FINAL DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | NEEDS_ATTENTION | LIMITED | FAILED
+Host ◀── one status line + changed files + open notes
 ```
 
-On `DONE` Claude doesn't read the change; it moves on to the next task. At the end it
-runs the whole test suite once and has the whole change reviewed once.
+On `DONE`, the host doesn't waste tokens re-reading diffs; it moves on to the next task.
+At the end, it runs the full test suite once and runs a final whole-change review.
 
-### When an agent runs out of quota
+### Quota & 3-way fallback
 
-If an agent hits its usage limit, the work doesn't stop halfway; the other agent takes
-over its role:
-
-- **Before starting:** Codex writes the account's quota (5-hour and weekly windows) into
-  its session files. The script reads the newest one and shows it on the first line:
-  `usage: codex 5h=40% week=12%`. If either window is at 90% or more, Codex is skipped
-  from the start.
-- **During the task:** a step that fails with an error such as "usage limit" or
-  `RESOURCE_EXHAUSTED` is marked `LIMITED`, and that agent isn't used for the rest of
-  the run.
-  - *Implement:* the other agent starts over and is told the partial changes may
-    already be in the working tree.
-  - *Fix round:* the other agent gets the brief and the fix list together.
-  - *Review:* the other agent reviews. If you asked for a cross-family review and it
-    ended up same-family, the `concerns:` line says so.
-- **If both are out:** the result is `FINAL LIMITED`, and the `limits:` line says who
-  resets when. If it happened during review, the review is skipped and the result is
-  `DONE_WITH_CONCERNS`.
-
-A fallback to Antigravity with no model chosen uses `EXTERNAL_AGENT_AGY_MODEL`, else
-`gemini-4-neon-medium`. Every takeover shows on a `fallback:` line, and Claude mentions
-it in its report. To insist on one agent, pass `--no-fallback`.
-
-## Task routing (2026-11)
-
-This rests on the vendors' launch material for GPT-6.2 (Nov 17) and Gemini 4
-Neon/Hydrogen (Nov 12-18), hands-on experience with them, and one image-task test per
-CLI, and the 2026-11-22 eval run below, where Sol and Neon came out equal. Hydrogen
-and Luna weren't in that run.
-
-| Work | Who |
-|---|---|
-| Standard implementation: a 1-3 file feature or bug fix, writing tests, edge-case-heavy code | **Sol or Neon, as equals**: alternated, or whichever has more quota left (`gpt-6.2-sol` `medium`/`high`, `gemini-4-neon-medium`) |
-| Hard work: multi-file integration, algorithms/design, tricky debugging | codex `gpt-6.2-astra` `high`/`xhigh` or agy `gemini-4-neon-high/xhigh`, or Claude itself |
-| Fast mechanical chores with an exact spec: renames, moving code, formatting, docs, boilerplate | agy `gemini-4-hydrogen-low/medium` |
-| Image and asset generation: icons, sprites, textures, mockups | agy `gemini-4-hydrogen-low` (Nano Banana via agy's `image-generator` subagent) or codex `gpt-6-luna` `low` (Codex's built-in image tool) |
-| Read-only investigation | codex `gpt-6.2-astra` `high` or agy `gemini-4-neon-high` |
-| Per-task review | the other family's peer: Neon reviews Sol's work, Sol reviews Neon's; Astra or Neon `high` for hard tasks |
-| Final whole-change review | Astra or Neon `high`, from the family that wrote less of the code |
-
-Why:
-
-- **Sol and Neon are peers.** Both are their vendor's fast everyday model and do standard
-  work equally well, so they form one pool. Splitting tasks between them stretches both
-  quotas, and each is the other's natural cross-family reviewer. At `max` effort Sol came
-  within half a point of Astra on FrontierCode 2.0 at about a fifth of the cost.
-- **Hydrogen is fast but not as smart.** It replaces Gemini 3.8 Flash (Google says it's
-  about 2.5x faster) and is the cheapest Gemini 4, but it reasons less than Sol or Neon.
-  So it gets only jobs where speed matters and thinking doesn't: exact-spec edits, and
-  tool-driven work like image generation, where the image model does the hard part. No
-  edge-case-heavy code, bug-catching tests, reviews or investigations.
-- **Astra** is OpenAI's strongest model for long, hard work. It costs about 4x Sol per
-  token and uses up the Codex quota fast.
-- **Luna** is Codex's fast, cheap model. In an image task the model only writes the
-  prompt and saves the file.
-- The new Sol is reported to leave facts out of code Q&A answers (a 14-point drop on
-  SWE-Atlas-QnA), so investigations go to Astra or Neon, and Sol reviews at effort `high`.
-- Both GPT-6.2 models regressed on OpenAI's *Blocker Deception* test: they're more
-  likely to work around an obstacle (say, a file the brief names is missing) without
-  mentioning it. The brief template now asks for that to be reported, and the verify and
-  review steps catch what slips through.
-- **Neon** is the newest and strongest Gemini 4 most accounts get. Its coding claims are
-  good but not yet independently verified. **Carbon** needs Google AI Ultra; route hard
-  work to it only if `agy models` lists it. **Argon** still works, and the measurements
-  below were made with it.
-- Left out of the pipeline: Codex's `ultra` effort (it starts its own sub-agents) and the
-  `gemini-pro-orchestrator-*` models (they switch models inside one session). Neither has
-  been tested with the schema, resume and one-writer-per-tree rules; the script rejects
-  `ultra`.
-- "The other family" means the model family, not the CLI: agy also offers Claude and
-  GPT-OSS models, and a review by those isn't a second pair of eyes.
-
-### Image tasks
-
-Both CLIs generate images inside a normal task. agy hands the request to its built-in
-`image-generator` subagent, which checks its own result up to three times. Codex uses its
-built-in image tool. The brief gives the subject, style, background, size, format and the
-exact path in the project. The run uses `--no-review`, since a code reviewer can't judge a
-picture, and a `--verify` that checks the file exists in the right format. Then Claude
-looks at the image itself, and if it misses the brief, sends the change back to the same
-thread. In a test, both made a usable 1024-1254 px cat icon in 37-45 seconds.
-
-## Keeping itself current: `doctor`
-
-Claude runs `agent_run.sh doctor` once at the start of each session:
-
-1. **CLI version:** the installed Codex and Antigravity versions are compared with the
-   latest release (npm/GitHub for Codex, `agy changelog` for agy). If Codex is behind,
-   Claude mentions it once. If the recommended models don't run on the old version, it
-   asks you to run `codex update` and uses the fallback model from `models.tsv` until
-   then. It never updates anything itself. agy updates itself in the background.
-2. **Model list:** the models each CLI offers are compared with `scripts/models.tsv`. A
-   new model the skill doesn't know, or a recommended one that's gone, triggers a
-   "routing may be stale" warning. Claude carries on with the task, says so in its
-   report, and offers to refresh the skill (research the new models, update §1's table,
-   `models.tsv` and the README).
-3. **Probe run:** each recommended model is asked to reply "OK". A model can be listed
-   and still be rejected by an older CLI (0.163.0 rejected GPT-6.2). Passed probes are
-   cached per CLI version for 14 days, so quota is spent only after an update. If a
-   probe fails, Claude switches to the fallback model in `models.tsv`.
-
-```bash
-S=~/.claude/skills/external-agent/scripts/agent_run.sh
-$S doctor                           # full check
-$S doctor --no-probe                # free checks only
-$S doctor --agent codex --reprobe   # ignore the cache and probe again
-```
-
-The output is `DOCTOR OK` or `DOCTOR ATTENTION`, followed by `next:` lines saying what to
-do.
-
-## Test results (2026-11-22, current models)
-
-The same 3 scenarios, now run for both standard-work peers: a Codex arm (Sol implements)
-and a Neon arm (Antigravity, Gemini 4 Neon implements). Graded with the hidden tests.
-The controller was Claude Opus 5.5 (Claude Code 2.1.330, headless). One run per case.
-
-| Arm | Plan (2 tasks) | Parser | Investigation | Reviewer chosen |
-|---|---|---|---|---|
-| **Codex: gpt-6.2-sol** (Astra for the investigation) | **14/14**, 82 s + 65 s | **22/22**, 146 s | both bugs found, 80 s | Astra |
-| **Antigravity: gemini-4-neon** (Neon `high` for the investigation) | **14/14**, 84 s + 63 s | **22/22**, 154 s | both bugs found, 176 s | Astra (plan), Sol (parser) |
-
-- **Sol and Neon came out equal:** every hidden test passed, agent times were within a few
-  seconds, every task ended `DONE` on the first pass, and no fix rounds were needed.
-- **Neon used fewer agent tokens:** 127k + 101k input on the plan against Sol's 247k + 223k,
-  and 247k against 362k on the parser. Codex re-reads its system prompt every turn.
-- **Both reported a real obstacle instead of hiding it.** In the first attempt, the parser
-  scenario's `npm test` script (`node --test test/`) crashed on Node 22.23.5 before
-  loading any test. Codex stopped with `NEEDS_CONTEXT` and Neon with
-  `DONE_WITH_CONCERNS`/`BLOCKED`; neither quietly edited a file outside its scope. The
-  scenario was fixed (`node --test`) and both parser cases were re-run; the table shows
-  the re-runs.
-- Claude's side cost $0.35-0.57 per case. Times in the Plan and Parser columns are the agent's own (`elapsed_seconds`); the Investigation column is the whole case's wall time.
-- Hydrogen and Luna (chores and images) weren't part of this run.
-
-**Re-running:** `claude plugin eval` can't test this skill any more. It runs each case in
-an OS sandbox with no network and a stand-in HOME, so Codex and agy never start (Claude
-then does the work itself, and an LLM judge may still pass it). Use
-`external-agent/evals/run-headless.sh [case ...]`, which runs each case with headless
-Claude Code (`claude -p`, logged in) in a folder under `~/.cache/external-agent/` and then
-grades it with `evals/grade.py` (hidden tests, commits, pipeline summaries). The `*-neon`
-cases are the Antigravity arm. These are real, paid model runs.
-
-## Test results (2026-10, previous models)
-
-The same 3 scenarios were used: a two-task Python plan, an edge-case-heavy JS parser,
-and a read-only bug investigation. Grading used hidden tests the agents never saw. The
-controller was Claude Opus 5.5 throughout.
-
-| Setup | Pass rate | Agent time (plan / parser / investigation) | Note |
-|---|---|---|---|
-| Without the skill, Claude + Codex | 93% | – | 2 real bugs left in the code (fractional exactly-full container, NaN) |
-| **Skill + Codex (gpt-6.1-sol)** | **100%** | 131 s / – / 74 s | The independent review caught the real bugs |
-| **Skill + Antigravity (Gemini 4 Argon)** | **100%** | 204 s / 149 s / 83 s | Time close to Codex, far fewer tokens |
-| Skill + Antigravity (Gemini 3.8 Flash) | 100% | 373 s / 605 s / 170 s | Correct, but 2-4x slower and more tokens |
-
-The parser scenario's Codex run used a different mode, so its time isn't comparable;
-that's the "–" in the table.
-
-On Claude's side, token use was about 75-98k per run whichever subcontractor was used.
-About 60k of that is the fixed cost of any Claude session.
+- **Before starting:** Codex records its 5-hour and weekly quota in its session files.
+  The script reads the latest value (`usage: codex 5h=40% week=12%`) and skips Codex at
+  90% or more (`EXTERNAL_AGENT_CODEX_MAX_PCT`).
+- **Mid-run:** If any CLI hits a usage or rate limit, that stage is marked `LIMITED` and
+  the role moves to another installed, non-limited external CLI (skipping `--host` so the
+  host isn't called recursively).
+- **If all external CLIs are out:** the run ends `FINAL LIMITED` with reset info on the
+  `limits:` line. Pass `--no-fallback` to insist on one specific agent.
 
 ---
 
-## Requirements
+## Task routing
+
+The skill balances the flagship load by host: **Neon** carries the primary load in
+Antigravity, **Opus** carries it in Claude Code, and they always share part of the heavy
+workload across families (`agy`'s bundled Claude models are never used — Claude tasks
+always go through `--agent claude`).
+
+| Work | Who |
+|---|---|
+| **Heavy / core coding, architecture, final approval of reports** | **Co-leads: Opus & Neon.** Host carries the primary load and delegates independent heavy modules to the other co-lead (`claude opus` / `agy gemini-4-neon-high`) |
+| **Code-generated visual content** (SVG, Canvas, WebGL/Three.js, CSS/HTML UI, shaders, charts) | **Co-leads only: Opus or Neon** |
+| **Light-to-standard coding:** 1–3 file features, routine bug fixes, writing tests, refactors | **Workhorse: `codex` `gpt-6.2-sol`** (`medium`/`high`) |
+| **Fast & economical chores + web search:** quick web lookups, exact-spec mechanical edits, docs/summaries | **`agy` `gemini-4-hydrogen-low/medium`** (especially web search & mechanical chores) or **`claude` `sonnet`** (light edits, docs, summaries) |
+| **Raster / AI image & asset generation:** icons, sprites, textures, mockups | **Nano Banana** (`agy` `gemini-4-hydrogen-low` / `image-generator`) & **Codex Image** (`codex` `gpt-6-luna` `low`) |
+| **Read-only code investigation** | `agy` `gemini-4-neon-high`, `claude` `opus`, or `codex` `gpt-6.2-astra` `high` |
+| **Standard per-task review** | **Co-leads (Opus / Neon), cross-family:** Neon or Opus reviews Sol; Neon reviews Opus; Opus reviews Neon |
+| **Critical-task review & final whole-change review** | **Heavyweight reviewers (cross-family): `agy` `gemini-4-carbon`** (when listed, else `gemini-4-neon-high/xhigh`) and/or **`codex` `gpt-6.2-astra`** |
+
+### Visual tasks & A/B Mockup Bake-off
+
+- **Code-generated visuals** (SVG, Canvas, Three.js, shaders, charts) always stay with
+  **Opus** or **Neon**.
+- **Raster / AI-generated visuals** use **Nano Banana** and **Codex Image** (`--no-review`
+  + format-checking `--verify`).
+- **A/B Mockup Bake-off:** For important visuals or multi-asset packs, generate 1 mockup
+  from **both** Codex Image and Nano Banana in parallel. A **co-lead** (the host or the
+  other co-lead) inspects both mockups, picks the winner, and assigns the remaining visual
+  tasks to the winning model.
+
+---
+
+## Keeping itself current: `doctor`
+
+At the start of each session, the host runs `agent_run.sh doctor`:
+
+1. **CLI versions:** compares installed `codex`, `agy`, and `claude` versions against
+   latest releases.
+2. **Model catalog:** compares offered models against `scripts/models.tsv` (and reports if
+   `gemini-4-carbon` is unlocked on the account).
+3. **Probe runs:** sends a tiny "reply OK" probe per recommended model (cached 14 days per
+   CLI version, so quota is only used after updates).
+
+```bash
+S=~/.claude/skills/external-agent/scripts/agent_run.sh
+$S doctor                            # full check (codex, agy, claude)
+$S doctor --no-probe                 # free checks only
+$S doctor --agent codex --reprobe    # ignore cache and probe again
+```
+
+---
+
+## Requirements & Installation
 
 | | macOS / Linux | Windows |
 |---|---|---|
-| Claude Code | ✓ | ✓ |
-| bash | built in (macOS's bash 3.2 is enough) | **Git for Windows** (Git Bash). Claude Code uses it for its Bash tool too |
-| Python 3.8+ | `python3` | `python` (the script tries both and skips the Microsoft Store alias) |
+| Host | Claude Code and/or Antigravity | same |
+| bash | built in | **Git for Windows** (Git Bash) |
+| Python 3.8+ | `python3` | `python` (Microsoft Store stub is skipped) |
 | git | ✓ | ✓ (comes with Git for Windows) |
-| At least one subcontractor | `codex` and/or `agy`, signed in | same |
-
-- **Codex CLI:** `brew install --cask codex` or `npm i -g @openai/codex`, then
-  `codex login`.
-- **Antigravity CLI:** comes with the Antigravity app (`agy`). Update with `agy update`.
-
-## Installation
+| Agent CLIs | `claude`, `codex`, `agy` (signed in) | same |
 
 ### macOS / Linux
 
 ```bash
 git clone https://github.com/cemalguvenn/external-agent.git
 cd external-agent
-./install.sh          # copies to ~/.claude/skills/external-agent
-./install.sh --link   # or symlinks it, so `git pull` updates the skill
+./install.sh --link --force                  # symlinks to Claude Code + Antigravity (if present)
+./install.sh --target claude|agy|both        # install to a specific platform
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
 git clone https://github.com/cemalguvenn/external-agent.git
-powershell -ExecutionPolicy Bypass -File .\external-agent\install.ps1
+powershell -ExecutionPolicy Bypass -File .\external-agent\install.ps1 -Force
+# Optional: -Target claude | agy | both
 ```
 
-This installs to `%USERPROFILE%\.claude\skills\external-agent` and warns if Git Bash or
-Python is missing. To update, run the same command with `-Force` after `git pull`.
+Restart Claude Code / Antigravity after installing.
 
-- The `-File` path is relative to the folder you run the command from. If you get
-  `The argument '.\install.ps1' to the -File parameter does not exist`, give the
-  script's full path: `powershell -ExecutionPolicy Bypass -File C:\...\external-agent\install.ps1`.
-- A ZIP download from GitHub unpacks into `external-agent-main`.
-- The Windows install leaves out `evals/`: Claude doesn't use it, and its deep paths can
-  exceed Windows PowerShell 5.1's 260-character path limit.
-
-### Manual installation
-
-Copy the `external-agent/` folder into `~/.claude/skills/`. Restart Claude Code after
-installing.
+---
 
 ## Usage
 
-Ask as you normally would, in any language; the skill kicks in on its own:
+Ask naturally in any language; the skill activates on its own:
 
-- "run the tasks in plan.md with codex, check each one, don't commit"
-- "give writing the tests to antigravity, and have codex review"
-- "have codex investigate the cause of this bug, but it must not change the code"
-- "hand the chores to external agents, you focus on the architecture"
-- "have gemini 4 neon write parseDimensions, and check it thoroughly"
-- "give the hard part to astra in codex, split the rest between sol and neon"
-- "have hydrogen make the game icons with nano banana"
+- "run the tasks in plan.md with external agents, share heavy parts between opus and neon, let sol write the tests"
+- "have carbon or astra do a critical review of the auth changes"
+- "use hydrogen to quickly check the latest API docs and update the config"
+- "generate two hero icon mockups with codex and nano banana, pick the best one and make the rest of the set"
+- "build the interactive SVG/Canvas chart yourself or with the other co-lead"
 
-**Antigravity model:** the skill doesn't hard-code a model. The first time Antigravity is
-needed, it lists the available models (`agy models`) and lets you pick, Gemini models
-first. Recommended: Neon for implementation, tests and reviews; Hydrogen for fast mechanical chores and images. For a standing default, set `EXTERNAL_AGENT_AGY_MODEL`.
-
-### Settings (environment variables)
+### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXTERNAL_AGENT_MODEL` | `gpt-6.2-sol` | Codex model (for hard work Claude passes `--model gpt-6.2-astra`). If unset and the installed CLI doesn't offer it, the `fallback` in `models.tsv` is used |
-| `EXTERNAL_AGENT_AGY_MODEL` | (none, you're asked) | Antigravity model, e.g. `gemini-4-neon-medium`. Also used when a task falls back from Codex; if unset, `gemini-4-neon-medium` |
-| `EXTERNAL_AGENT_CODEX_MAX_PCT` | `90` | Codex is skipped once its 5-hour or weekly usage reaches this percentage |
+| `EXTERNAL_AGENT_MODEL` | `gpt-6.2-sol` | Default Codex model |
+| `EXTERNAL_AGENT_AGY_MODEL` | (asked once per session) | Default Antigravity model (e.g. `gemini-4-neon-medium`) |
+| `EXTERNAL_AGENT_CLAUDE_MODEL` | `opus` | Default Claude CLI model (`opus` or `sonnet`) |
+| `EXTERNAL_AGENT_HOST` | (none) | Host platform (`claude` or `agy`); skipped by automatic fallback |
+| `EXTERNAL_AGENT_CODEX_MAX_PCT` | `90` | Skip Codex when 5h or weekly usage reaches this % |
 | `EXTERNAL_AGENT_RUNS` | `$TMPDIR/external-agent` | Root folder for run logs |
-| `EXTERNAL_AGENT_SNAP_ROOT` | `~/.cache/external-agent` | Antigravity's temporary project copies |
+| `EXTERNAL_AGENT_SNAP_ROOT` | `~/.cache/external-agent` | Temporary copies for Antigravity & Claude read-only runs |
 
-### Using the script directly
+### Calling the script directly
 
 ```bash
 S=~/.claude/skills/external-agent/scripts/agent_run.sh
-$S models --agent agy
 $S doctor
-$S delegate --agent agy --model gemini-4-hydrogen-medium \
-   --review-agent codex --review-model gpt-6.2-astra \
+$S models --agent agy
+$S delegate --host claude --agent codex --model gpt-6.2-sol \
+   --review-agent agy --review-model gemini-4-neon-high \
    --cd ~/project --brief task.md --verify "npm test" --name task-1
-$S delegate --agent codex --sandbox read-only --cd ~/project --brief question.md   # investigation only
-$S delegate --agent codex --no-fallback --cd ~/project --brief task.md            # never switch agents
+$S delegate --host agy --agent claude --model opus \
+   --review-agent codex --review-model gpt-6.2-astra \
+   --cd ~/project --brief core.md --verify "pytest" --name core-1
 ```
 
-## Safety and limits
+---
 
-- Subcontractors **never commit**. The brief forbids it for Codex and the script warns
-  if it does; Antigravity's sandbox makes `.git` read-only. Claude stages accepted work,
-  or commits it if you asked.
-- Codex runs in its `workspace-write` sandbox with network off (`--network` turns it on).
-- Antigravity's headless mode has no reliable read-only mode, so reviews and
-  investigations run in a **temporary copy** of the project; the real project isn't
-  touched, and the copy is deleted afterwards.
-- Every prompt to Antigravity ends with the full schema and a scope rule: no looking
-  outside the project folder, at environment variables or at other tools' data. Without
-  it, Gemini Flash was seen wandering outside the project.
-- For risky work (security, payments, data migrations, public APIs) the skill switches
-  to **manual mode**: Claude reads and tests the changes itself.
+## Safety & limits
 
-### Known limitations
+- **Subcontractors never commit.** The brief forbids commits, the script warns if `HEAD`
+  moves, and Antigravity's sandbox makes `.git` read-only.
+- **Read-only isolation:** Codex uses its native `read-only` sandbox; Antigravity and
+  Claude run reviews and read-only investigations in a disposable project copy that is
+  deleted afterwards.
+- **Manual mode:** For security, auth, payments, data migrations, or public API changes,
+  the host switches to step-by-step control and reads/tests the diffs itself.
+- **Host sandbox:** Run `agent_run.sh` with the host's shell sandbox disabled (Claude Code:
+  Bash sandbox off; Antigravity: `BypassSandbox: true`) so child CLIs can reach their
+  credentials and network.
 
-- **macOS:** Antigravity can't work on projects under `~/Library/Application Support`
-  (its sandbox blocks it).
-- **Antigravity trusted workspaces:** the project must be under a folder in
-  Antigravity's `trustedWorkspaces` list (your home folder by default).
-- **Antigravity's quota can't be seen in advance:** `agy` doesn't write its usage
-  anywhere, so a limit only shows when a step fails. Its real quota error hasn't been
-  seen yet; if Antigravity runs out and the result is `FAILED` instead of `LIMITED`,
-  add the message's wording to the `limit-check` patterns in the script.
-- **Windows:** tested on Windows 11 25H2 (Git Bash, codex-cli 0.163, agy 1.4.6) with the
-  Codex, Antigravity, mixed and read-only pipelines. Also:
-  - Antigravity's terminal sandbox needs Windows 11 24H2.
-  - Git for Windows' default install adds only `Git\cmd` to PATH; `install.ps1` finds Git
-    Bash next to `git.exe`, so no `bash` in PowerShell is fine.
-  - Write `python`, not `python3`, in verify commands (a python.org install has no
-    `python3`).
-  - If Codex's Windows sandbox gives trouble, use it inside WSL.
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| Codex exit code 137, no output at all | Claude Code's Bash sandbox is stopping Codex. The skill already runs its commands with the sandbox off; if you run them by hand, turn it off too. |
-| `codex: command not found` / broken symlink | `brew reinstall --cask codex` |
-| `FAILED`, "model is not supported when using Codex with a ChatGPT account" | The Codex CLI is older than the model (0.163.0 doesn't know GPT-6.2): `codex update`. Until then `EXTERNAL_AGENT_MODEL=gpt-6.1-sol` |
-| `DOCTOR ATTENTION` | Follow its `next:` lines: update a CLI, switch to the fallback model, or refresh the skill's routing |
-| `agy needs a model` | Pick one of the listed models |
-| `jetski: no output produced … permission` | Call agy through the script, not directly |
-| Very slow Antigravity run | The project and the temporary-copy folder must be under your home folder |
-| `stage … LIMITED`, a `fallback:` line | An agent's quota ran out and the other agent took over. Codex is skipped up front once its usage passes 90% (`EXTERNAL_AGENT_CODEX_MAX_PCT`). To insist on one agent, `--no-fallback`. |
-| `FINAL LIMITED` | Both agents are out of quota; the `limits:` line says when each resets |
-| `install.ps1`: `-File parameter does not exist` / `SKILL.md not found` | Run it from the folder that contains it, or pass its full path |
-
-Details: `external-agent/references/codex-cli.md` and `antigravity-cli.md`.
+Details and per-CLI troubleshooting: `external-agent/references/claude-cli.md`,
+`codex-cli.md`, and `antigravity-cli.md`.
 
 ## Folder structure
 
 ```
-external-agent/                 ← the skill (install this under ~/.claude/skills/)
-├── SKILL.md                    ← the instructions Claude reads
+external-agent/                 ← skill (installed to ~/.claude/skills/ and/or ~/.gemini/antigravity/skills/)
+├── SKILL.md                    ← instructions read by the host (Claude Code / Antigravity)
 ├── scripts/
 │   ├── agent_run.sh            ← delegate / task / resume / review / models / doctor
-│   ├── doctor.py               ← checks CLI versions, model lists and probe runs
-│   ├── models.tsv              ← the models the skill knows and their roles (doctor compares against it)
-│   ├── implementer.schema.json ← agent report schema
-│   └── review.schema.json      ← review findings schema
-├── references/                 ← brief templates, CLI notes, manual mode
-└── evals/                      ← 3 test scenarios x 2 arms (hidden tests included), run-headless.sh, grade.py
+│   ├── doctor.py               ← CLI version, model catalog, and probe checks
+│   ├── models.tsv              ← known models and roles across claude, codex, agy
+│   ├── implementer.schema.json ← structured implementer report schema
+│   └── review.schema.json      ← structured review findings schema
+├── references/                 ← brief templates, per-CLI notes, manual mode
+└── evals/                      ← headless evaluation harness and test cases
 install.sh / install.ps1
 ```
-
-To rerun the test scenarios, see "Re-running" under the 2026-11 test results.
 
 ## License
 

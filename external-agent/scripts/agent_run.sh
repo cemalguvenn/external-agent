@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # agent_run.sh — run an external coding agent CLI as a sub-agent and print a compact,
-# parseable summary. Backends: codex (OpenAI Codex CLI) and agy (Google Antigravity CLI).
+# parseable summary. Backends: codex (OpenAI Codex CLI), agy (Google Antigravity CLI),
+# and claude (Anthropic Claude Code CLI).
 #
 # Pipeline (the default way to delegate):
-#   agent_run.sh delegate --cd DIR --brief FILE [--verify CMD] [--agent codex|agy] [--model M]
-#                         [--review-agent codex|agy] [--review-model M] [--name NAME]
-#                         [--effort LEVEL] [--review-effort LEVEL] [--max-fix-rounds N]
+#   agent_run.sh delegate --cd DIR --brief FILE [--verify CMD] [--agent codex|agy|claude] [--model M]
+#                         [--review-agent codex|agy|claude] [--review-model M] [--host claude|agy]
+#                         [--name NAME] [--effort LEVEL] [--review-effort LEVEL] [--max-fix-rounds N]
 #                         [--no-review] [--no-fallback] [--sandbox workspace-write|read-only]
 #                         [--network] [--run-dir DIR]
 #     implement -> verify (run here, not trusted from the agent) -> fresh read-only review
 #     -> send critical/important findings and verify failures back to the same thread
 #     -> repeat up to N fix rounds -> one FINAL status line.
 #     An agent that is out of quota (Codex's recorded usage at or above the threshold, or
-#     a step failing with a usage-limit error) hands its role to the other agent, unless
+#     a step failing with a usage-limit error) hands its role to another available agent
+#     (avoiding the host's own CLI when --host / EXTERNAL_AGENT_HOST is set), unless
 #     --no-fallback; with no agent left the run ends FINAL LIMITED.
 #
 # Single steps (manual control):
@@ -20,8 +22,8 @@
 #   agent_run.sh resume --cd DIR --thread ID --brief FILE [--agent A] [--model M] ...
 #   agent_run.sh review --cd DIR (--uncommitted | --base BRANCH | --commit SHA) [--brief FILE]
 #                       [--agent A] [--model M] ...
-#   agent_run.sh models --agent codex|agy          # list the models the account can use
-#   agent_run.sh doctor [--agent codex|agy|both] [--no-probe] [--reprobe]
+#   agent_run.sh models --agent codex|agy|claude   # list the models the account can use
+#   agent_run.sh doctor [--agent codex|agy|claude|all] [--no-probe] [--reprobe]
 #     once per session: CLI versions vs latest, offered models vs models.tsv, and a tiny
 #     probe run per recommended model (cached per CLI version) -> DOCTOR OK | ATTENTION
 #
@@ -29,11 +31,13 @@
 #
 # Env: EXTERNAL_AGENT_MODEL (codex default model, default gpt-6.2-sol),
 #      EXTERNAL_AGENT_AGY_MODEL (agy default model; no built-in default — ask the user),
+#      EXTERNAL_AGENT_CLAUDE_MODEL (claude default model, default opus),
+#      EXTERNAL_AGENT_HOST (host platform: claude|agy; skipped in automatic fallback),
 #      EXTERNAL_AGENT_RUNS (run root), EXTERNAL_AGENT_CODEX_MAX_PCT (skip Codex when its
 #      5-hour or weekly usage is at or above this, default 90). A fallback to agy with no
 #      agy model chosen uses EXTERNAL_AGENT_AGY_MODEL, else gemini-4-neon-medium.
-# Both CLIs must be called with Claude Code's Bash sandbox disabled: inside it Codex is
-# killed (exit 137) and agy cannot reach its own sandbox and credentials.
+# CLIs must be called with the host's sandbox disabled (Claude Code: Bash sandbox off;
+# Antigravity: BypassSandbox: true) so child CLIs can reach their own credentials and network.
 
 set -uo pipefail
 
@@ -62,7 +66,7 @@ case "$MODE" in delegate|task|resume|review|models|doctor) ;; *) die "unknown mo
 if [ "$MODE" = "doctor" ]; then py_run "$SCRIPT_DIR/doctor.py" "$@"; exit $?; fi
 
 CD="" BRIEF="" NAME="" THREAD="" RUN_DIR="" VERIFY=""
-AGENT="codex" MODEL="" REVIEW_AGENT="" REVIEW_MODEL=""
+AGENT="codex" MODEL="" REVIEW_AGENT="" REVIEW_MODEL="" HOST_AGENT="${EXTERNAL_AGENT_HOST:-}"
 EFFORT="medium" REVIEW_EFFORT="high"
 SANDBOX="workspace-write" NETWORK=0 REVIEW_TARGET=() MAX_FIX=2 DO_REVIEW=1 FALLBACK=1
 
@@ -76,6 +80,7 @@ while [ $# -gt 0 ]; do
     --model) MODEL="$2"; shift 2;;
     --review-agent) REVIEW_AGENT="$2"; shift 2;;
     --review-model) REVIEW_MODEL="$2"; shift 2;;
+    --host) HOST_AGENT="$2"; shift 2;;
     --effort) EFFORT="$2"; shift 2;;
     --review-effort) REVIEW_EFFORT="$2"; shift 2;;
     --sandbox) SANDBOX="$2"; shift 2;;
@@ -96,19 +101,21 @@ done
 
 need_cli() {  # agent
   case "$1" in
-    codex) command -v codex >/dev/null 2>&1 || die "codex not found on PATH (macOS/Homebrew: brew reinstall --cask codex)";;
-    agy)   command -v agy >/dev/null 2>&1 || die "agy (Antigravity CLI) not found on PATH";;
-    *)     die "unknown agent '$1' (codex|agy)";;
+    codex)  command -v codex >/dev/null 2>&1 || die "codex not found on PATH (macOS/Homebrew: brew reinstall --cask codex)";;
+    agy)    command -v agy >/dev/null 2>&1 || die "agy (Antigravity CLI) not found on PATH";;
+    claude) command -v claude >/dev/null 2>&1 || die "claude (Claude Code CLI) not found on PATH";;
+    *)      die "unknown agent '$1' (codex|agy|claude)";;
   esac
 }
 
 default_model() {  # agent -> prints model or nothing
   case "$1" in
-    codex) if [ -n "${EXTERNAL_AGENT_MODEL:-}" ]; then printf '%s' "$EXTERNAL_AGENT_MODEL"
-           else  # an older CLI can't run the newest default: fall back (see models.tsv)
-             printf '%s' "$(py_run "$SCRIPT_DIR/doctor.py" resolve codex gpt-6.2-sol)"
-           fi;;
-    agy)   printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-}";;
+    codex)  if [ -n "${EXTERNAL_AGENT_MODEL:-}" ]; then printf '%s' "$EXTERNAL_AGENT_MODEL"
+            else  # an older CLI can't run the newest default: fall back (see models.tsv)
+              printf '%s' "$(py_run "$SCRIPT_DIR/doctor.py" resolve codex gpt-6.2-sol)"
+            fi;;
+    agy)    printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-}";;
+    claude) printf '%s' "${EXTERNAL_AGENT_CLAUDE_MODEL:-opus}";;
   esac
 }
 
@@ -116,6 +123,17 @@ if [ "$MODE" = "models" ]; then
   need_cli "$AGENT"
   case "$AGENT" in
     agy)   agy models 2>/dev/null | grep -v '^Fetching';;
+    claude) py_run - "$SCRIPT_DIR/models.tsv" <<'PY'
+import sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    for line in f:
+        if not line.strip() or line.startswith("#"):
+            continue
+        p = line.rstrip("\n").split("\t")
+        if len(p) >= 4 and p[0] == "claude":
+            print(f"{p[1]}\t[{p[2]}]\t{p[3]}")
+PY
+    ;;
     codex) py_run - <<'PY'
 import json, os
 p = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "models_cache.json")
@@ -221,11 +239,19 @@ elif cmd == "meta":            # stage dir -> thread/tokens/errors as shell assi
     d = args[0]
     thread, tin, tcached, tout, errors = "", 0, 0, 0, 0
     agy = load(f"{d}/agy.json")
+    cl = load(f"{d}/claude.json")
     if agy is not None:
         u = agy.get("usage") or {}
         thread = agy.get("conversation_id", "")
         tin, tcached, tout = u.get("input_tokens", 0), u.get("cache_read_tokens", 0), u.get("output_tokens", 0)
         errors = 0 if agy.get("status") == "SUCCESS" else 1
+    elif cl is not None:
+        u = cl.get("usage") or {}
+        thread = cl.get("session_id", "")
+        tin = u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+        tcached = u.get("cache_read_input_tokens", 0)
+        tout = u.get("output_tokens", 0)
+        errors = 1 if cl.get("is_error") else 0
     else:
         try:
             for line in open(f"{d}/events.jsonl", encoding="utf-8", errors="replace"):
@@ -256,6 +282,22 @@ elif cmd == "agy-extract":     # agy.json -> report file (structured answer), ex
         sys.exit(1)
     with open(args[1], "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
+
+elif cmd == "claude-extract":  # claude.json -> report file (structured answer), exit 1 if none
+    cl = load(args[0]) or {}
+    obj = cl.get("structured_output")
+    if not isinstance(obj, dict) and not cl.get("is_error"):
+        obj = last_json_object(cl.get("result") or "")
+    if obj is None:
+        sys.exit(1)
+    with open(args[1], "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
+elif cmd == "compact-json":    # schema file -> single-line JSON string (for claude --json-schema)
+    obj = load(args[0])
+    if obj is None:
+        sys.exit(1)
+    print(json.dumps(obj, separators=(",", ":")))
 
 elif cmd == "field":           # report.json field (lists joined with ', ')
     d = load(args[0]) or {}
@@ -367,10 +409,13 @@ elif cmd == "limit-check":     # failed stage dir -> why it hit a usage limit; e
     agy = load(f"{d}/agy.json")
     if isinstance(agy, dict):
         texts.append(str(agy.get("error") or ""))
+    cl = load(f"{d}/claude.json")
+    if isinstance(cl, dict) and cl.get("is_error"):
+        texts.append(str(cl.get("result") or cl.get("error") or ""))
     t = "\n".join(texts)
-    if not re.search(r"usage limit|rate.?limit|too many requests|\b429\b|quota|RESOURCE_EXHAUSTED", t, re.I):
+    if not re.search(r"usage limit|hit your limit|rate.?limit|too many requests|\b429\b|quota|RESOURCE_EXHAUSTED|overloaded", t, re.I):
         sys.exit(1)
-    if re.search(r"usage limit", t, re.I):
+    if re.search(r"usage limit|hit your limit", t, re.I):
         why = "usage limit"
     elif re.search(r"quota|RESOURCE_EXHAUSTED", t, re.I):
         why = "quota exhausted"
@@ -412,6 +457,25 @@ agy_common() {  # model effort
   COMMON=(--model "$1" --print-timeout 30m --output-format json)
   # Model ids like gemini-4-neon-medium already carry their effort level.
   case "$1" in *-low|*-medium|*-high|*-xhigh|*-max) ;; *) COMMON+=(--effort "$2");; esac
+}
+
+# Strip parent Claude Code session env vars so child `claude -p` uses its own login cleanly.
+claude_env_strip() {
+  CLAUDE_STRIP=(-u ANTHROPIC_BASE_URL -u CLAUDECODE)
+  local v
+  for v in $(env | awk -F= '/^CLAUDE_CODE_|^CLAUDE_AGENT_/{print $1}'); do
+    CLAUDE_STRIP+=(-u "$v")
+  done
+}
+
+claude_common() {  # model effort schema_file
+  local eff="$2"
+  [ "$eff" = "xhigh" ] && eff="max"  # claude --effort supports low|medium|high|max
+  local schema_str; schema_str="$(py compact-json "$3")"
+  COMMON=(--model "$1" --effort "$eff" --output-format json
+          --permission-mode bypassPermissions --disable-slash-commands
+          --json-schema "$schema_str")
+  claude_env_strip
 }
 
 how_to_see_change() {  # review target... -> sentence for the reviewer prompt
@@ -479,6 +543,21 @@ backend_task() {  # agent model stage_dir brief effort
       RC=$?
       drop_snapshot
       py agy-extract "$dir/agy.json" "$dir/report.json" || { [ $RC -eq 0 ] && RC=3; };;
+    claude)
+      claude_common "$model" "$effort" "$IMPL_SCHEMA"
+      local where="$CD"
+      { cat "$brief"
+        if [ "$SANDBOX" = "read-only" ]; then
+          printf '\n\nYou are working in a disposable copy of the project: you may run code to investigate, but report findings only; any edits are discarded.'
+        fi
+        printf '\n\nFinal message: JSON matching the enforced schema.'
+      } > "$dir/claude-prompt.md"
+      if [ "$SANDBOX" = "read-only" ]; then make_snapshot; where="$SNAP"; fi
+      ( cd "$where" && env "${CLAUDE_STRIP[@]}" claude -p "${COMMON[@]}" ) \
+        < "$dir/claude-prompt.md" > "$dir/claude.json" 2> "$dir/stderr.log"
+      RC=$?
+      drop_snapshot
+      py claude-extract "$dir/claude.json" "$dir/report.json" || { [ $RC -eq 0 ] && RC=3; };;
   esac
 }
 
@@ -501,6 +580,12 @@ backend_resume() {  # agent model stage_dir thread brief effort
         > "$dir/agy.json" 2> "$dir/stderr.log"
       RC=$?
       py agy-extract "$dir/agy.json" "$dir/report.json" || { [ $RC -eq 0 ] && RC=3; };;
+    claude)
+      claude_common "$model" "$effort" "$IMPL_SCHEMA"
+      ( cd "$CD" && env "${CLAUDE_STRIP[@]}" claude -p --resume "$thread" "${COMMON[@]}" ) \
+        < "$brief" > "$dir/claude.json" 2> "$dir/stderr.log"
+      RC=$?
+      py claude-extract "$dir/claude.json" "$dir/report.json" || { [ $RC -eq 0 ] && RC=3; };;
   esac
 }
 
@@ -547,6 +632,21 @@ backend_review() {  # agent model stage_dir brief-or-empty effort target...
       RC=$?
       drop_snapshot
       py agy-extract "$dir/agy.json" "$dir/review.json" || { [ $RC -eq 0 ] && RC=3; };;
+    claude)
+      # Fresh read-only session in a disposable copy so it can run tests without touching the tree.
+      { printf 'You are a code reviewer working in a disposable copy of the project (no git history).\nYou may read files and run code or tests to check behaviour; do not try to fix anything, edits are discarded.\nThe change under review:\n\n<change>\n'
+        inline_change "$@"
+        printf '\n</change>\n\n'
+        cat "$brief"
+        printf '\n\nFinal message: JSON matching the enforced schema (verdict, summary, findings).\n'
+      } > "$dir/review-prompt.md"
+      claude_common "$model" "$effort" "$REVIEW_SCHEMA"
+      make_snapshot
+      ( cd "$SNAP" && env "${CLAUDE_STRIP[@]}" claude -p --no-session-persistence "${COMMON[@]}" ) \
+        < "$dir/review-prompt.md" > "$dir/claude.json" 2> "$dir/stderr.log"
+      RC=$?
+      drop_snapshot
+      py claude-extract "$dir/claude.json" "$dir/review.json" || { [ $RC -eq 0 ] && RC=3; };;
   esac
 }
 
@@ -596,14 +696,23 @@ role_model() {  # agent -> the model chosen for it in this run, else its fallbac
   if [ "$1" = "$AGENT0" ]; then printf '%s' "$MODEL0"
   elif [ "$1" = "$REVIEW_AGENT0" ]; then printf '%s' "$REVIEW_MODEL0"
   elif [ "$1" = agy ]; then printf '%s' "${EXTERNAL_AGENT_AGY_MODEL:-gemini-4-neon-medium}"
+  elif [ "$1" = claude ]; then printf '%s' "${EXTERNAL_AGENT_CLAUDE_MODEL:-opus}"
   else default_model "$1"; fi
 }
-switch_role() {  # implement|review -> gives the role to the other agent; 1 if none is left
-  local cur new m
+switch_role() {  # implement|review -> gives the role to another available agent; 1 if none is left
+  local cur cand new="" m
   if [ "$1" = implement ]; then cur="$AGENT"; else cur="$REVIEW_AGENT"; fi
-  [ "$cur" = codex ] && new=agy || new=codex
-  [ $FALLBACK -eq 1 ] && command -v "$new" >/dev/null 2>&1 && ! is_limited "$new" || return 1
-  [ "$new" = codex ] && { codex_quota_ok || return 1; }
+  [ $FALLBACK -eq 1 ] || return 1
+  for cand in agy codex claude; do
+    [ "$cand" = "$cur" ] && continue
+    # Don't fall back to the host's own CLI: let the host handle it directly instead.
+    [ -n "$HOST_AGENT" ] && [ "$cand" = "$HOST_AGENT" ] && continue
+    command -v "$cand" >/dev/null 2>&1 || continue
+    is_limited "$cand" && continue
+    if [ "$cand" = codex ]; then codex_quota_ok || continue; fi
+    new="$cand"; break
+  done
+  [ -n "$new" ] || return 1
   m="$(role_model "$new")"
   if [ "$1" = implement ]; then AGENT="$new" MODEL="$m"; else REVIEW_AGENT="$new" REVIEW_MODEL="$m"; fi
   FALLBACKS="${FALLBACKS:+$FALLBACKS
@@ -799,7 +908,7 @@ echo "elapsed_seconds=$(( $(date +%s) - START ))"
 echo "model=$MODEL effort=$EFFORT"
 echo "run_dir=$RUN_DIR"
 [ -n "$BASE_SHA" ] && echo "base_sha=$BASE_SHA"
-if [ -f "$RUN_DIR/events.jsonl" ] || [ -f "$RUN_DIR/agy.json" ]; then
+if [ -f "$RUN_DIR/events.jsonl" ] || [ -f "$RUN_DIR/agy.json" ] || [ -f "$RUN_DIR/claude.json" ]; then
   add_tokens "$RUN_DIR"
   echo "thread_id=${EV_THREAD:-UNKNOWN}"
   echo "tokens_in=$EV_IN tokens_cached=$EV_CACHED tokens_out=$EV_OUT"

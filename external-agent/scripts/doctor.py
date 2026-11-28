@@ -1,6 +1,6 @@
 """agent_run.sh doctor: is this skill still in step with the CLIs and their models?
 
-Checks, per agent (codex, agy):
+Checks, per agent (codex, agy, claude):
   1. CLI version against the latest release (network; "unknown" when offline).
   2. The models the CLI offers against models.tsv: a recommended model that is no longer
      offered, or an offered model the skill has never heard of, means the routing in
@@ -31,14 +31,22 @@ LIMIT_WORDS = re.compile(r"usage limit|RESOURCE_EXHAUSTED|quota|\b429\b|rate.?li
 PROMPT = "Reply with exactly the word OK and nothing else. Do not run any tools."
 
 
-def run(cmd, timeout=30, cwd=None, stdin=None):
+def run(cmd, timeout=30, cwd=None, stdin=None, env=None):
     cmd = [shutil.which(cmd[0]) or cmd[0]] + list(cmd[1:])  # Windows: npm/codex are .cmd shims
     try:
         p = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True,
-                           timeout=timeout, encoding="utf-8", errors="replace")
+                           timeout=timeout, encoding="utf-8", errors="replace", env=env)
         return p.returncode, p.stdout, p.stderr
     except (OSError, subprocess.TimeoutExpired) as e:
         return 124, "", str(e)
+
+
+def claude_clean_env():
+    env = dict(os.environ)
+    for k in list(env):
+        if k in ("ANTHROPIC_BASE_URL", "CLAUDECODE") or k.startswith(("CLAUDE_CODE_", "CLAUDE_AGENT_")):
+            env.pop(k, None)
+    return env
 
 
 def vtuple(v):
@@ -51,7 +59,7 @@ def first_version(text):
 
 
 def load_known():
-    known = {"codex": {}, "agy": {}}
+    known = {"codex": {}, "agy": {}, "claude": {}}
     with open(KNOWN_FILE, encoding="utf-8") as f:
         for line in f:
             if not line.strip() or line.startswith("#"):
@@ -155,6 +163,30 @@ def probe_codex(model, workdir):
     return ("LIMITED" if LIMIT_WORDS.search(why) else "FAIL"), why
 
 
+def claude_latest():
+    if shutil.which("npm"):
+        rc, out, _ = run(["npm", "view", "@anthropic-ai/claude-code", "version"], timeout=20)
+        if rc == 0 and first_version(out):
+            return first_version(out)
+    return ""
+
+
+def probe_claude(model, workdir):
+    rc, out, err = run(
+        ["claude", "-p", "--model", model, "--effort", "low", "--output-format", "json",
+         "--disable-slash-commands", "--no-session-persistence", "--tools", ""],
+        timeout=240, cwd=workdir, stdin=PROMPT, env=claude_clean_env(),
+    )
+    try:
+        d = json.loads(out[out.index("{"):]) if "{" in out else {}
+    except ValueError:
+        d = {}
+    if rc == 0 and d and not d.get("is_error"):
+        return "OK", ""
+    why = short_error(err + "\n" + out) if not d else str(d.get("result") or d.get("error") or "error")[:200]
+    return ("LIMITED" if LIMIT_WORDS.search(why + err) else "FAIL"), why
+
+
 def probe_agy(model, workdir):
     rc, out, err = run(["agy", "-p", PROMPT, "--model", model, "--output-format", "json",
                         "--print-timeout", "3m"], timeout=240, cwd=workdir)
@@ -189,13 +221,18 @@ def resolve(argv):
 def main(argv):
     if argv[:1] == ["resolve"]:
         return resolve(argv[1:])
-    agents, do_probe, reprobe = ["codex", "agy"], True, False
+    agents, do_probe, reprobe = ["codex", "agy", "claude"], True, False
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--agent":
             v = argv[i + 1] if i + 1 < len(argv) else ""
-            agents = ["codex", "agy"] if v in ("both", "all") else [v]
+            if v == "all":
+                agents = ["codex", "agy", "claude"]
+            elif v == "both":
+                agents = ["codex", "agy"]
+            else:
+                agents = [v]
             i += 2
             continue
         if a == "--no-probe":
@@ -203,11 +240,11 @@ def main(argv):
         elif a == "--reprobe":
             reprobe = True
         else:
-            print(f"error: unknown doctor option '{a}' (--agent codex|agy|both, --no-probe, --reprobe)", file=sys.stderr)
+            print(f"error: unknown doctor option '{a}' (--agent codex|agy|claude|all, --no-probe, --reprobe)", file=sys.stderr)
             return 2
         i += 1
     for a in agents:
-        if a not in ("codex", "agy"):
+        if a not in ("codex", "agy", "claude"):
             print(f"error: unknown agent '{a}'", file=sys.stderr)
             return 2
 
@@ -223,7 +260,7 @@ def main(argv):
                 print(f"doctor {agent}: not installed")
                 continue
             installed = first_version(run([agent, "--version"], timeout=30)[1])
-            latest = codex_latest() if agent == "codex" else agy_latest()
+            latest = codex_latest() if agent == "codex" else (agy_latest() if agent == "agy" else claude_latest())
             if not latest:
                 state = "latest unknown (offline?)"
             elif vtuple(installed) < vtuple(latest):
@@ -231,6 +268,8 @@ def main(argv):
                 if agent == "codex":
                     infos.append("a Codex update is available; mention it to the user once "
                                  "(`codex update`, or `brew upgrade --cask codex` / `npm i -g @openai/codex`)")
+                elif agent == "claude":
+                    infos.append("a Claude Code update is available; mention it to the user once (`claude update`)")
                 else:
                     state += " (agy updates itself in the background; the next run may already use it)"
             else:
@@ -254,35 +293,44 @@ def main(argv):
                       f"{(': ' + why) if why else ''}")
                 if res == "OK":
                     cache[f"codex|{fb}|{installed}"] = {"ok": True, "at": int(time.time())}
-            offered = codex_models() if agent == "codex" else agy_models()
-            if offered is None:
-                print(f"doctor {agent}: models unavailable (run the CLI once, check login)")
-                attention = True
-                continue
-            if agent == "agy":
-                full_ids = list(offered)
-                offered = {EFFORT_SUFFIX.sub("", m) for m in offered}
-            k = known[agent]
-            new = sorted(m for m in offered if m not in k)
-            gone = sorted(m for m, r in k.items() if r == "recommended" and m not in offered)
-            print(f"doctor {agent}: models new={','.join(new) or '-'} "
-                  f"recommended-missing={','.join(gone) or '-'}")
-            fallback = next((m for m, r in k.items() if r == "fallback"), "")
-            if gone and "OUTDATED" in state:
-                # The server only lists models the installed CLI can run, so an old CLI
-                # hides newer models: that is the CLI's problem, not the routing's.
-                attention = True
-                nexts.append(f"{agent} CLI {installed} is too old for {', '.join(gone)}: ask the user to "
-                             f"run `codex update`; until then the script uses {fallback or 'another listed model'} "
-                             f"as the default, and pass --model/--review-model {fallback or '<listed model>'} "
-                             "where you would have named a missing one")
-                gone = []
-            if new or gone:
-                attention = True
-                nexts.append(f"{agent} routing may be stale ({'new: ' + ', '.join(new) if new else ''}"
-                             f"{'; ' if new and gone else ''}{'gone: ' + ', '.join(gone) if gone else ''}): "
-                             "tell the user and offer to refresh the skill (SKILL.md section 1, "
-                             "scripts/models.tsv, README.md)")
+            if agent == "claude":
+                # Claude CLI has no `models` listing subcommand; probe the recommended aliases directly.
+                k = known[agent]
+                offered = {m for m, r in k.items() if r == "recommended"}
+                fallback = next((m for m, r in k.items() if r == "fallback"), "")
+                full_ids = []
+            else:
+                offered = codex_models() if agent == "codex" else agy_models()
+                if offered is None:
+                    print(f"doctor {agent}: models unavailable (run the CLI once, check login)")
+                    attention = True
+                    continue
+                if agent == "agy":
+                    full_ids = list(offered)
+                    offered = {EFFORT_SUFFIX.sub("", m) for m in offered}
+                    if "gemini-4-carbon" in offered:
+                        print("doctor agy: gemini-4-carbon available (heavyweight critical reviewer unlocked)")
+                k = known[agent]
+                new = sorted(m for m in offered if m not in k)
+                gone = sorted(m for m, r in k.items() if r == "recommended" and m not in offered)
+                print(f"doctor {agent}: models new={','.join(new) or '-'} "
+                      f"recommended-missing={','.join(gone) or '-'}")
+                fallback = next((m for m, r in k.items() if r == "fallback"), "")
+                if gone and "OUTDATED" in state:
+                    # The server only lists models the installed CLI can run, so an old CLI
+                    # hides newer models: that is the CLI's problem, not the routing's.
+                    attention = True
+                    nexts.append(f"{agent} CLI {installed} is too old for {', '.join(gone)}: ask the user to "
+                                 f"run `codex update`; until then the script uses {fallback or 'another listed model'} "
+                                 f"as the default, and pass --model/--review-model {fallback or '<listed model>'} "
+                                 "where you would have named a missing one")
+                    gone = []
+                if new or gone:
+                    attention = True
+                    nexts.append(f"{agent} routing may be stale ({'new: ' + ', '.join(new) if new else ''}"
+                                 f"{'; ' if new and gone else ''}{'gone: ' + ', '.join(gone) if gone else ''}): "
+                                 "tell the user and offer to refresh the skill (SKILL.md section 1, "
+                                 "scripts/models.tsv, README.md)")
 
             if not do_probe:
                 continue
@@ -303,7 +351,8 @@ def main(argv):
                     print(f"doctor {agent}: probe {model} OK (cached)")
                     continue
                 t0 = time.time()
-                res, why = (probe_codex if agent == "codex" else probe_agy)(model, workdir)
+                probe_fn = {"codex": probe_codex, "agy": probe_agy, "claude": probe_claude}[agent]
+                res, why = probe_fn(model, workdir)
                 secs = int(time.time() - t0)
                 print(f"doctor {agent}: probe {model} {res} {secs}s{(': ' + why) if why else ''}")
                 if res == "OK":
